@@ -17,7 +17,23 @@ export async function proxy(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const response = NextResponse.next({ request });
-  if (supabaseUrl && supabaseKey) {
+  const protectedRoutePrefix = request.nextUrl.pathname.startsWith("/dashboard") ||
+    request.nextUrl.pathname.startsWith("/vendor") ||
+    request.nextUrl.pathname.startsWith("/admin");
+
+  // Fail closed: if Supabase isn't configured we cannot verify sessions, so
+  // protected routes must not be served rather than silently allowing access.
+  if (!supabaseUrl || !supabaseKey) {
+    if (protectedRoutePrefix) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      url.searchParams.set("next", request.nextUrl.pathname);
+      return NextResponse.redirect(url);
+    }
+    return response;
+  }
+
+  {
     const supabase = createServerClient(supabaseUrl, supabaseKey, {
       cookies: {
         getAll: () => request.cookies.getAll(),
@@ -29,16 +45,13 @@ export async function proxy(request: NextRequest) {
       },
     });
     const { data: { user } } = await supabase.auth.getUser();
-    const protectedRoute = request.nextUrl.pathname.startsWith("/dashboard") ||
-      request.nextUrl.pathname.startsWith("/vendor") ||
-      request.nextUrl.pathname.startsWith("/admin");
-    if (!user && protectedRoute) {
+    if (!user && protectedRoutePrefix) {
       const url = request.nextUrl.clone();
       url.pathname = "/login";
       url.searchParams.set("next", request.nextUrl.pathname);
       return redirectWithCookies(url, response);
     }
-    if (user && protectedRoute) {
+    if (user && protectedRoutePrefix) {
       const { data: profile } = await supabase
         .from("profiles")
         .select("role, is_admin")
@@ -68,8 +81,6 @@ export async function proxy(request: NextRequest) {
   if (!host || host === appHost || host === "localhost") {
     return response;
   }
-
-  if (!supabaseUrl || !supabaseKey) return response;
 
   const domainResponse = await fetch(
     `${supabaseUrl}/rest/v1/organizations?select=slug&custom_domain=eq.${encodeURIComponent(host)}&limit=1`,
