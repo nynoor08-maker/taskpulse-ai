@@ -1,0 +1,243 @@
+import { NextResponse } from "next/server";
+import { createVendorSquad } from "@/lib/vapi/agents";
+import { createClient, createServiceClient } from "@/server";
+import { captureException, enforceRateLimit } from "@/lib/security";
+
+type DispatchPayload = {
+  taskId: string;
+  phoneNumber: string;
+  description: string;
+  maxBudget: number | null;
+};
+
+type VapiCallResponse = {
+  id?: string;
+  monitor?: { controlUrl?: string; listenUrl?: string };
+};
+
+function isDispatchPayload(value: unknown): value is DispatchPayload {
+  if (!value || typeof value !== "object") return false;
+
+  const payload = value as Record<string, unknown>;
+  return (
+    typeof payload.taskId === "string" &&
+    payload.taskId.length > 0 &&
+    typeof payload.phoneNumber === "string" &&
+    /^\+[1-9]\d{1,14}$/.test(payload.phoneNumber) &&
+    typeof payload.description === "string" &&
+    payload.description.trim().length > 0 &&
+    (payload.maxBudget === null ||
+      (typeof payload.maxBudget === "number" &&
+        Number.isFinite(payload.maxBudget) &&
+        payload.maxBudget >= 0))
+  );
+}
+
+export async function POST(request: Request) {
+  const rateLimitResponse = await enforceRateLimit(request);
+  if (rateLimitResponse) return rateLimitResponse;
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    captureException(new Error("Unable to reach Vapi."), { route: "dispatch-squad" });
+    return NextResponse.json(
+      { success: false, error: "Request body must be valid JSON." },
+      { status: 400 },
+    );
+  }
+
+  if (!isDispatchPayload(body)) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          "taskId, phoneNumber, description, and a non-negative maxBudget are required.",
+      },
+      { status: 400 },
+    );
+  }
+
+  let userClient;
+  let supabase;
+  try {
+    userClient = await createClient();
+    supabase = await createServiceClient();
+  } catch {
+    return NextResponse.json(
+      { success: false, error: "Supabase server configuration is incomplete." },
+      { status: 500 },
+    );
+  }
+
+  const {
+    data: { user },
+    error: userError,
+  } = await userClient.auth.getUser();
+  if (userError || !user) {
+    return NextResponse.json(
+      { success: false, error: "Authentication is required." },
+      { status: 401 },
+    );
+  }
+
+  const { data: dispatchSettings, error: settingsError } = await supabase
+    .from("app_settings")
+    .select("dispatch_paused")
+    .eq("key", "dispatch")
+    .single();
+  if (settingsError) {
+    return NextResponse.json(
+      { success: false, error: `Unable to check dispatch status: ${settingsError.message}` },
+      { status: 500 },
+    );
+  }
+  if (dispatchSettings.dispatch_paused) {
+    return NextResponse.json(
+      { success: false, error: "Dispatches are temporarily paused by an administrator." },
+      { status: 503 },
+    );
+  }
+
+  const { data: task, error: taskError } = await supabase
+    .from("tasks")
+    .select("id, organization_id")
+    .eq("id", body.taskId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (taskError) {
+    return NextResponse.json(
+      { success: false, error: `Unable to verify task: ${taskError.message}` },
+      { status: 500 },
+    );
+  }
+  if (!task) {
+    return NextResponse.json(
+      { success: false, error: "Task not found." },
+      { status: 404 },
+    );
+  }
+
+  const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: recentTasks, error: recentTasksError } = await supabase
+    .from("tasks")
+    .select("id")
+    .eq("user_id", user.id)
+    .gte("created_at", windowStart);
+  if (recentTasksError) {
+    return NextResponse.json(
+      { success: false, error: `Unable to check dispatch limit: ${recentTasksError.message}` },
+      { status: 500 },
+    );
+  }
+
+  const taskIds = (recentTasks ?? []).map((recentTask) => recentTask.id);
+  if (taskIds.length > 0) {
+    const { count, error: rateLimitError } = await supabase
+      .from("call_logs")
+      .select("id", { count: "exact", head: true })
+      .in("task_id", taskIds);
+    if (rateLimitError) {
+      return NextResponse.json(
+        { success: false, error: `Unable to check dispatch limit: ${rateLimitError.message}` },
+        { status: 500 },
+      );
+    }
+    if ((count ?? 0) >= 5) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Daily dispatch limit reached. You can dispatch up to 5 calls every 24 hours.",
+        },
+        { status: 429, headers: { "Retry-After": "86400" } },
+      );
+    }
+  }
+
+  const apiKey = process.env.VAPI_API_KEY;
+  const assistantPhoneNumberId = process.env.VAPI_PHONE_NUMBER_ID;
+  if (!apiKey || !assistantPhoneNumberId) {
+    return NextResponse.json(
+      { success: false, error: "Vapi configuration is incomplete." },
+      { status: 500 },
+    );
+  }
+
+  let vapiResponse: Response;
+  try {
+    vapiResponse = await fetch("https://api.vapi.ai/call", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        squad: createVendorSquad({
+          taskDescription: body.description,
+          maxBudget: body.maxBudget,
+          vendorPhone: body.phoneNumber,
+        }),
+        phoneNumberId: assistantPhoneNumberId,
+        customer: { number: body.phoneNumber },
+      }),
+    });
+  } catch {
+    return NextResponse.json(
+      { success: false, error: "Unable to reach Vapi." },
+      { status: 502 },
+    );
+  }
+
+  if (!vapiResponse.ok) {
+    return NextResponse.json(
+      { success: false, error: `Vapi rejected the call: ${await vapiResponse.text()}` },
+      { status: 502 },
+    );
+  }
+
+  const vapiCall = (await vapiResponse.json()) as VapiCallResponse;
+  if (!vapiCall.id) {
+    return NextResponse.json(
+      { success: false, error: "Vapi returned no call ID." },
+      { status: 502 },
+    );
+  }
+
+  const { data: callLog, error: logError } = await supabase.from("call_logs").insert({
+    organization_id: task.organization_id,
+    task_id: task.id,
+    vapi_call_id: vapiCall.id,
+    status: "in_progress",
+  }).select("id").single();
+  if (logError) {
+    return NextResponse.json(
+      { success: false, error: `Unable to save call log: ${logError.message}` },
+      { status: 500 },
+    );
+  }
+  if (vapiCall.monitor?.controlUrl) {
+    const { error: monitorError } = await supabase.from("call_monitor_credentials").insert({
+      call_log_id: callLog.id,
+      vapi_control_url: vapiCall.monitor.controlUrl,
+      vapi_listen_url: vapiCall.monitor.listenUrl ?? null,
+    });
+    if (monitorError) {
+      captureException(monitorError, { route: "dispatch-squad", callId: vapiCall.id, operation: "save-monitor-credentials" });
+    }
+  }
+
+  const { error: updateError } = await supabase
+    .from("tasks")
+    .update({ status: "in_progress" })
+    .eq("id", task.id);
+  if (updateError) {
+    return NextResponse.json(
+      { success: false, error: `Unable to update task: ${updateError.message}` },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({ success: true, callId: vapiCall.id });
+}
