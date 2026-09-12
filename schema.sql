@@ -24,6 +24,22 @@ create type public.profile_role as enum (
   'admin'
 );
 
+create type public.task_category as enum (
+  'plumbing',
+  'hvac',
+  'electrical',
+  'roofing',
+  'landscaping',
+  'cleaning',
+  'general_handyman'
+);
+
+create type public.task_urgency as enum (
+  'emergency_immediate',
+  'same_day',
+  'scheduled_week'
+);
+
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
@@ -123,11 +139,17 @@ create table public.tasks (
   user_id uuid not null references public.profiles(id) on delete cascade,
   title text not null,
   description text,
+  category public.task_category,
+  urgency public.task_urgency,
+  location_street_address text,
+  location_zip_code text check (location_zip_code ~ '^\d{5}$'),
+  location_city text,
   target_vendor_phone text,
   max_budget numeric,
   callback_url text,
   status public.task_status not null default 'pending',
   payment_status public.payment_status not null default 'unpaid',
+  source text not null default 'web' check (source in ('web', 'api', 'inbound_call')),
   created_at timestamptz not null default now()
 );
 
@@ -189,6 +211,8 @@ create table public.vendors (
   business_name text not null,
   phone_number text not null unique,
   email text,
+  category public.task_category,
+  service_zip_codes text[],
   hourly_rate numeric not null check (hourly_rate >= 0),
   is_accepting_jobs boolean not null default true,
   created_at timestamptz not null default now()
@@ -207,6 +231,10 @@ create table public.vendor_slots (
 
 create index vendor_slots_vendor_id_requested_date_idx
   on public.vendor_slots (vendor_id, requested_date, start_time);
+
+create index vendors_category_accepting_idx
+  on public.vendors (category)
+  where is_accepting_jobs;
 
 create index tasks_organization_id_created_at_idx
   on public.tasks (organization_id, created_at desc);
