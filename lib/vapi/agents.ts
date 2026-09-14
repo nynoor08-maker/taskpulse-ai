@@ -8,6 +8,51 @@ const toolServer = {
   url: "https://taskpulse-ai.vercel.app/api/vapi/tools",
 };
 
+/** Builds a Vapi "handoff" tool that silently transfers the call to another squad member. */
+function handoffTool(assistantName: string, description: string, functionName: string) {
+  return {
+    type: "handoff" as const,
+    destinations: [
+      {
+        type: "assistant" as const,
+        assistantName,
+        description,
+        contextEngineeringPlan: { type: "all" as const },
+      },
+    ],
+    function: { name: functionName },
+  };
+}
+
+const checkVendorAvailabilityTool = {
+  type: "function" as const,
+  messages: [{ type: "request-start" as const, content: "Checking schedule and pricing..." }],
+  function: {
+    name: "check_vendor_availability",
+    description: "Checks a vendor's availability and pricing for a specific date.",
+    parameters: {
+      type: "object",
+      properties: {
+        vendorPhone: {
+          type: "string",
+          description: "Vendor phone number in E.164 format",
+        },
+        requestedDate: {
+          type: "string",
+          description: "Date requested for service in YYYY-MM-DD format",
+        },
+      },
+      required: ["vendorPhone", "requestedDate"],
+    },
+  },
+  server: toolServer,
+};
+
+/**
+ * Builds a three-agent vendor negotiation squad: Triage confirms the merchant
+ * is open and willing to take the job, Negotiator anchors and locks a price,
+ * and Closing confirms an arrival window and texts the customer.
+ */
 export function createVendorSquad({ taskDescription, maxBudget, vendorPhone }: AgentContext) {
   const budget = maxBudget == null ? "the client's stated budget" : `$${maxBudget}`;
 
@@ -15,40 +60,32 @@ export function createVendorSquad({ taskDescription, maxBudget, vendorPhone }: A
     members: [
       {
         assistant: {
-          name: "Negotiator",
+          name: "Triage",
           firstMessage:
-            "Hello! I am calling on behalf of a client regarding a local service request. Do you have a moment to talk?",
-          maxDurationSeconds: 180,
+            "Hello! I'm calling on behalf of a client about a local service request. Do you have a quick moment?",
+          maxDurationSeconds: 60,
           model: {
             provider: "openai",
             model: "gpt-4o-mini",
             messages: [
               {
                 role: "system",
-                content: `You are the Negotiator in a multi-agent vendor-call system. Your only responsibility is negotiating a rate for this request: "${taskDescription}". Keep the price at or below ${budget}. Do not promise a booking time or collect scheduling details. Once the vendor agrees to a price, call handoff_to_scheduler silently so the Scheduler can confirm availability.`,
+                content: `You are the Triage agent in a multi-agent vendor-call system. In one or two exchanges, confirm the business is currently open and able to take on new work, and ask directly whether they accept emergency or same-day dispatches. Do not discuss price or scheduling details yourself. If they confirm they can take the job, call handoff_to_negotiator so the Negotiator can discuss pricing for: "${taskDescription}". If they say they are closed or cannot take new work, thank them politely and end the call.`,
               },
             ],
             tools: [
-              {
-                type: "handoff",
-                destinations: [
-                  {
-                    type: "assistant",
-                    assistantName: "Scheduler",
-                    description:
-                      "Call after the vendor agrees to a price and scheduling needs to be confirmed.",
-                    contextEngineeringPlan: { type: "all" },
-                  },
-                ],
-                function: { name: "handoff_to_scheduler" },
-              },
+              handoffTool(
+                "Negotiator",
+                "Call once the vendor confirms they are open and willing to take the job.",
+                "handoff_to_negotiator",
+              ),
             ],
           },
         },
       },
       {
         assistant: {
-          name: "Scheduler",
+          name: "Negotiator",
           maxDurationSeconds: 180,
           model: {
             provider: "openai",
@@ -56,36 +93,69 @@ export function createVendorSquad({ taskDescription, maxBudget, vendorPhone }: A
             messages: [
               {
                 role: "system",
-                content: `You are the Scheduler in a multi-agent vendor-call system. The Negotiator has already handled pricing for: "${taskDescription}". Confirm the requested service date, available appointment time, and necessary service details. Use check_vendor_availability whenever schedule verification is needed. Do not renegotiate the agreed price. The vendor phone number is ${vendorPhone}.`,
+                content: `You are the Negotiator in a multi-agent vendor-call system. Your only responsibility is negotiating a rate for this request: "${taskDescription}". Keep the price at or below ${budget}. The vendor's phone number is ${vendorPhone}. Use check_vendor_availability if you need to confirm scheduling windows while negotiating. Once the vendor verbally agrees to a specific dollar amount, call lock_quote with that exact amount to record it, then call handoff_to_closing so the Closing agent can confirm an arrival window. Do not confirm a booking time or arrival window yourself.`,
+              },
+            ],
+            tools: [
+              checkVendorAvailabilityTool,
+              {
+                type: "function",
+                messages: [{ type: "request-start", content: "Locking in that price..." }],
+                function: {
+                  name: "lock_quote",
+                  description: "Records the final agreed price once the vendor verbally confirms it.",
+                  parameters: {
+                    type: "object",
+                    properties: {
+                      agreedPrice: {
+                        type: "number",
+                        description: "The final dollar amount the vendor agreed to.",
+                      },
+                    },
+                    required: ["agreedPrice"],
+                  },
+                },
+                server: toolServer,
+              },
+              handoffTool(
+                "Closing",
+                "Call once a price has been locked in with lock_quote.",
+                "handoff_to_closing",
+              ),
+            ],
+          },
+        },
+      },
+      {
+        assistant: {
+          name: "Closing",
+          maxDurationSeconds: 120,
+          model: {
+            provider: "openai",
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content: `You are the Closing agent in a multi-agent vendor-call system. The Negotiator has already locked in a price for: "${taskDescription}". Briefly recap the agreed scope and price, then ask the vendor for a specific arrival window, such as "between 2 and 4 PM today". Once you have a specific window, call confirm_booking with it to finalize the job and text the customer a confirmation. Do not renegotiate the price.`,
               },
             ],
             tools: [
               {
                 type: "function",
-                messages: [
-                  {
-                    type: "request-start",
-                    content: "Checking schedule and pricing...",
-                  },
-                ],
+                messages: [{ type: "request-start", content: "Confirming your booking..." }],
                 function: {
-                  name: "check_vendor_availability",
+                  name: "confirm_booking",
                   description:
-                    "Checks a vendor's availability and pricing for a specific date.",
+                    "Finalizes the job with the confirmed arrival window and texts the customer a confirmation.",
                   parameters: {
                     type: "object",
                     properties: {
-                      vendorPhone: {
+                      arrivalWindow: {
                         type: "string",
-                        description: "Vendor phone number in E.164 format",
-                      },
-                      requestedDate: {
-                        type: "string",
-                        description:
-                          "Date requested for service in YYYY-MM-DD format",
+                        description: "The confirmed arrival window, e.g. '2:00 PM - 4:00 PM today'.",
                       },
                     },
-                    required: ["vendorPhone", "requestedDate"],
+                    required: ["arrivalWindow"],
                   },
                 },
                 server: toolServer,

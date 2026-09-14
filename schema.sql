@@ -215,6 +215,8 @@ create table public.vendors (
   service_zip_codes text[],
   hourly_rate numeric not null check (hourly_rate >= 0),
   is_accepting_jobs boolean not null default true,
+  accepts_emergency_dispatch boolean not null default true,
+  business_hours text,
   created_at timestamptz not null default now()
 );
 
