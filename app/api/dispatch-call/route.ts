@@ -315,6 +315,7 @@ export async function POST(request: Request) {
     task_id: body.taskId,
     vapi_call_id: vapiCall.id,
     prompt_variant_id: promptVariant?.id ?? null,
+    vendor_phone: body.phoneNumber,
     status: "in_progress",
   }).select("id").single();
 

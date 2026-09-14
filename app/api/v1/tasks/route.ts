@@ -148,6 +148,7 @@ export async function POST(request: Request) {
       organization_id: apiKey.organization_id,
       task_id: task.id,
       vapi_call_id: call.id,
+      vendor_phone: payload.vendorPhone,
       status: "in_progress",
     });
     if (callLogError) throw new Error(`Unable to create call log: ${callLogError.message}`);

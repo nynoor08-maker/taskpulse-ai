@@ -209,6 +209,7 @@ export async function POST(request: Request) {
     organization_id: task.organization_id,
     task_id: task.id,
     vapi_call_id: vapiCall.id,
+    vendor_phone: body.phoneNumber,
     status: "in_progress",
   }).select("id").single();
   if (logError) {

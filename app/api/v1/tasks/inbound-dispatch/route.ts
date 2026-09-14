@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/server";
 import { captureException, enforceRateLimit } from "@/lib/security";
-import { createVendorSquad } from "@/lib/vapi/agents";
+import { findNextVendor } from "@/lib/vendor-pool";
+import { placeVendorSquadCall, type SquadCallResult } from "@/lib/vapi/dispatch";
 
 type JsonRecord = Record<string, unknown>;
 type ServiceClient = Awaited<ReturnType<typeof createServiceClient>>;
@@ -151,23 +152,6 @@ async function resolveCallerProfile(supabase: ServiceClient, callerPhone: string
   return created.user.id;
 }
 
-/** Finds the best available vendor for a category, preferring one whose declared service area covers the caller's ZIP code. */
-async function findMatchingVendor(supabase: ServiceClient, category: TaskCategory, zipCode: string) {
-  const { data: vendors, error } = await supabase
-    .from("vendors")
-    .select("id, phone_number, organization_id, service_zip_codes, hourly_rate")
-    .eq("category", category)
-    .eq("is_accepting_jobs", true)
-    .order("hourly_rate", { ascending: true });
-  if (error) throw new Error(`Unable to search for vendors: ${error.message}`);
-
-  const candidates = vendors ?? [];
-  const inServiceArea = candidates.find(
-    (vendor) => !vendor.service_zip_codes?.length || vendor.service_zip_codes.includes(zipCode),
-  );
-  return inServiceArea ?? candidates[0] ?? null;
-}
-
 async function createTaskDispatch(
   supabase: ServiceClient,
   args: CreateTaskDispatchArgs,
@@ -194,7 +178,10 @@ async function createTaskDispatch(
   }
 
   const userId = await resolveCallerProfile(supabase, callerPhone);
-  const vendor = await findMatchingVendor(supabase, args.category, args.location.zipCode);
+  const vendor = await findNextVendor(supabase, {
+    category: args.category,
+    zipCode: args.location.zipCode,
+  });
 
   const { data: task, error: taskError } = await supabase
     .from("tasks")
@@ -241,51 +228,15 @@ async function createTaskDispatch(
     };
   }
 
-  let vapiResponse: Response;
+  let vapiCall: SquadCallResult;
   try {
-    vapiResponse = await fetch("https://api.vapi.ai/call", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        squad: createVendorSquad({
-          taskDescription: args.description,
-          maxBudget: args.maxBudget,
-          vendorPhone: vendor.phone_number,
-        }),
-        phoneNumberId,
-        customer: { number: vendor.phone_number },
-      }),
+    vapiCall = await placeVendorSquadCall({
+      description: args.description,
+      maxBudget: args.maxBudget,
+      vendorPhone: vendor.phone_number,
     });
-  } catch {
-    return {
-      taskId: task.id,
-      status: task.status,
-      vendorMatched: true,
-      message:
-        "I've logged your request and matched a provider, but we couldn't reach our dispatch service just now. Our team will follow up shortly.",
-    };
-  }
-
-  if (!vapiResponse.ok) {
-    captureException(new Error(`Vapi rejected the squad call: ${await vapiResponse.text()}`), {
-      route: "inbound-dispatch",
-      taskId: task.id,
-    });
-    return {
-      taskId: task.id,
-      status: task.status,
-      vendorMatched: true,
-      message:
-        "I've logged your request and matched a provider, but dispatch could not be started automatically. Our team will follow up shortly.",
-    };
-  }
-
-  const vapiCall = (await vapiResponse.json()) as { id?: string };
-  if (!vapiCall.id) {
-    captureException(new Error("Vapi returned no call ID."), { route: "inbound-dispatch", taskId: task.id });
+  } catch (error) {
+    captureException(error, { route: "inbound-dispatch", taskId: task.id });
     return {
       taskId: task.id,
       status: task.status,
@@ -299,6 +250,7 @@ async function createTaskDispatch(
     organization_id: vendor.organization_id,
     task_id: task.id,
     vapi_call_id: vapiCall.id,
+    vendor_phone: vendor.phone_number,
     status: "in_progress",
   });
   if (callLogError) throw new Error(`Unable to save call log: ${callLogError.message}`);

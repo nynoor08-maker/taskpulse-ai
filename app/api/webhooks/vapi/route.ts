@@ -6,6 +6,11 @@ import { dispatchWebhookEvent } from "@/lib/events/webhook-dispatcher";
 import { analyzeCallLog } from "@/lib/conversation-analytics";
 import { captureException, enforceRateLimit } from "@/lib/security";
 import { sendTaskSMS } from "@/lib/twilio";
+import { findNextVendor } from "@/lib/vendor-pool";
+import { placeVendorSquadCall } from "@/lib/vapi/dispatch";
+
+/** Hard cap on automatic re-dials to the next vendor in the pool, to bound cost and prevent runaway auto-dial loops. */
+const MAX_VENDOR_ATTEMPTS = 3;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -81,6 +86,80 @@ function formatPrice(price: number | null) {
   return price == null ? "Not provided" : price.toFixed(2);
 }
 
+type FallbackTaskRow = {
+  id: string;
+  title: string;
+  description: string | null;
+  target_vendor_phone: string | null;
+  organization_id: string | null;
+  category: string | null;
+  location_zip_code: string | null;
+  max_budget: number | null;
+};
+
+/**
+ * When a vendor call ends without an agreed price (no-answer, decline, etc.),
+ * attempts to automatically re-dial the next available vendor from the same
+ * category's backup pool, skipping any phone numbers already attempted for
+ * this task. Returns true if a new call was successfully dispatched.
+ */
+async function tryDispatchNextVendor(
+  supabase: Awaited<ReturnType<typeof createServiceClient>>,
+  task: FallbackTaskRow,
+  taskId: string,
+): Promise<boolean> {
+  if (!task.category) return false;
+
+  const { data: previousCalls, error: previousCallsError } = await supabase
+    .from("call_logs")
+    .select("vendor_phone")
+    .eq("task_id", taskId);
+  if (previousCallsError) {
+    throw new Error(`Unable to check previous vendor attempts: ${previousCallsError.message}`);
+  }
+
+  const attemptedPhones = [
+    ...new Set(
+      (previousCalls ?? [])
+        .map((call) => call.vendor_phone)
+        .filter((phone): phone is string => Boolean(phone)),
+    ),
+  ];
+
+  if (attemptedPhones.length >= MAX_VENDOR_ATTEMPTS) return false;
+
+  const nextVendor = await findNextVendor(supabase, {
+    category: task.category,
+    organizationId: task.organization_id,
+    zipCode: task.location_zip_code,
+    excludePhones: attemptedPhones,
+  });
+  if (!nextVendor) return false;
+
+  const vapiCall = await placeVendorSquadCall({
+    description: task.description ?? task.title,
+    maxBudget: task.max_budget,
+    vendorPhone: nextVendor.phone_number,
+  });
+
+  const { error: callLogError } = await supabase.from("call_logs").insert({
+    organization_id: nextVendor.organization_id ?? task.organization_id,
+    task_id: taskId,
+    vapi_call_id: vapiCall.id,
+    vendor_phone: nextVendor.phone_number,
+    status: "in_progress",
+  });
+  if (callLogError) throw new Error(`Unable to save call log: ${callLogError.message}`);
+
+  const { error: taskUpdateError } = await supabase
+    .from("tasks")
+    .update({ status: "in_progress", target_vendor_phone: nextVendor.phone_number })
+    .eq("id", taskId);
+  if (taskUpdateError) throw new Error(`Unable to update task: ${taskUpdateError.message}`);
+
+  return true;
+}
+
 export async function POST(request: Request) {
   const rateLimitResponse = await enforceRateLimit(request);
   if (rateLimitResponse) return rateLimitResponse;
@@ -147,7 +226,7 @@ export async function POST(request: Request) {
 
   const { data: callLog, error: lookupError } = await supabase
     .from("call_logs")
-    .select("id, task_id, agreed_price, fallback_dispatched")
+    .select("id, task_id, agreed_price, fallback_dispatched, vendor_phone")
     .eq("vapi_call_id", callId)
     .maybeSingle();
 
@@ -200,7 +279,9 @@ export async function POST(request: Request) {
     .from("tasks")
     .update({ status })
     .eq("id", callLog.task_id)
-    .select("id, title, description, target_vendor_phone, user_id, organization_id")
+    .select(
+      "id, title, description, target_vendor_phone, user_id, organization_id, category, location_zip_code, max_budget",
+    )
     .single();
 
   if (taskError) {
@@ -221,6 +302,7 @@ export async function POST(request: Request) {
   }
 
   let fallbackSent = false;
+  let vendorRetryDispatched = false;
   if (
     requiresFallback(endedReason) &&
     callLog.agreed_price == null &&
@@ -245,28 +327,46 @@ export async function POST(request: Request) {
     }
 
     if (fallbackLog) {
-      try {
-        await dispatchFallback(task);
-        fallbackSent = true;
-      } catch (error) {
-        captureException(error, { route: "vapi-webhook", callId, operation: "fallback" });
-        const { error: resetError } = await supabase
-          .from("call_logs")
-          .update({ fallback_dispatched: false })
-          .eq("id", callLog.id);
-        const errorMessage =
-          error instanceof Error ? error.message : "Unable to send vendor fallback.";
-        return NextResponse.json(
-          {
-            success: false,
-            error: resetError
-              ? `${errorMessage} Unable to reset fallback state: ${resetError.message}`
-              : errorMessage,
-          },
-          { status: 502 },
-        );
+      let retried = false;
+      if (task.category) {
+        try {
+          retried = await tryDispatchNextVendor(supabase, task, callLog.task_id);
+          vendorRetryDispatched = retried;
+        } catch (error) {
+          captureException(error, { route: "vapi-webhook", callId, operation: "vendor-pool-retry" });
+        }
+      }
+
+      if (!retried) {
+        try {
+          await dispatchFallback(task);
+          fallbackSent = true;
+        } catch (error) {
+          captureException(error, { route: "vapi-webhook", callId, operation: "fallback" });
+          const { error: resetError } = await supabase
+            .from("call_logs")
+            .update({ fallback_dispatched: false })
+            .eq("id", callLog.id);
+          const errorMessage =
+            error instanceof Error ? error.message : "Unable to send vendor fallback.";
+          return NextResponse.json(
+            {
+              success: false,
+              error: resetError
+                ? `${errorMessage} Unable to reset fallback state: ${resetError.message}`
+                : errorMessage,
+            },
+            { status: 502 },
+          );
+        }
       }
     }
+  }
+
+  if (vendorRetryDispatched) {
+    // A new vendor is being dialed automatically; don't tell the customer
+    // the negotiation is "finished" while it's still actively in progress.
+    return NextResponse.json({ success: true, smsSent: false, fallbackSent, vendorRetryDispatched });
   }
 
   const { data: profile, error: profileError } = await supabase

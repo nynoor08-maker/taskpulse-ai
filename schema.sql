@@ -159,6 +159,7 @@ create table public.call_logs (
   task_id uuid not null references public.tasks(id) on delete cascade,
   vapi_call_id text unique,
   prompt_variant_id uuid references public.prompt_variants(id) on delete set null,
+  vendor_phone text,
   transcript text,
   summary text,
   agreed_price numeric,
