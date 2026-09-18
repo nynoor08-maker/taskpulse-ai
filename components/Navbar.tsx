@@ -4,19 +4,28 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ensureBrowserProfile, type ProfileSummary } from "@/lib/ensure-profile-browser";
 
+const supabaseConfigured = Boolean(
+  process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+);
+
 export function Navbar() {
   const [profile, setProfile] = useState<ProfileSummary | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(!supabaseConfigured);
 
   useEffect(() => {
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-      setLoaded(true);
-      return;
-    }
+    if (!supabaseConfigured) return;
+    let cancelled = false;
     void ensureBrowserProfile()
-      .then((next) => setProfile(next))
+      .then((next) => {
+        if (!cancelled) setProfile(next);
+      })
       .catch(() => null)
-      .finally(() => setLoaded(true));
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const isAdmin = Boolean(profile && (profile.is_admin || profile.role === "admin"));
