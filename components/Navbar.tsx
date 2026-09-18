@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ensureBrowserProfile, type ProfileSummary } from "@/lib/ensure-profile";
+import { ensureBrowserProfile, type ProfileSummary } from "@/lib/ensure-profile-browser";
 
 export function Navbar() {
   const [profile, setProfile] = useState<ProfileSummary | null>(null);

@@ -117,7 +117,7 @@ export function createVendorSquad({ taskDescription, maxBudget, vendorPhone }: A
                     required: ["agreedPrice"],
                   },
                 },
-                server: toolServer,
+                server: toolServer(),
               },
               handoffTool(
                 "Closing",
@@ -160,7 +160,7 @@ export function createVendorSquad({ taskDescription, maxBudget, vendorPhone }: A
                     required: ["arrivalWindow"],
                   },
                 },
-                server: toolServer,
+                server: toolServer(),
               },
             ],
           },
