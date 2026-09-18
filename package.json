@@ -10,6 +10,7 @@
     "test:agent-eval": "tsx scripts/test-agent-eval.ts",
     "test:load": "tsx scripts/load-test-concurrency.ts",
     "check:launch": "tsx scripts/launch-check.ts",
+    "test:smoke": "tsx scripts/smoke-e2e.ts",
     "test:live-voice": "tsx scripts/test-live-voice.ts"
   },
   "dependencies": {

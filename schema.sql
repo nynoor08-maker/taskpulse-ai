@@ -343,8 +343,9 @@ as $$
   from pg_tables
   where schemaname = 'public'
     and tablename in (
-      'organizations', 'organization_members', 'tasks', 'vendors', 'call_logs',
-      'prompt_variants', 'call_analytics', 'webhook_subscriptions'
+      'organizations', 'organization_members', 'profiles', 'tasks', 'vendors', 'call_logs',
+      'prompt_variants', 'call_analytics', 'webhook_subscriptions', 'api_keys',
+      'app_settings', 'idempotency_keys'
     )
   order by tablename;
 $$;

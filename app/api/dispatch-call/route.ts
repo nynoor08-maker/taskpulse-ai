@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/server";
 import { captureException, enforceRateLimit } from "@/lib/security";
+import { isSingleAssistantDispatchAllowed } from "@/lib/dispatch-mode";
 
 type DispatchPayload = {
   taskId: string;
@@ -52,6 +53,18 @@ function isDispatchPayload(value: unknown): value is DispatchPayload {
 export async function POST(request: Request) {
   const rateLimitResponse = await enforceRateLimit(request);
   if (rateLimitResponse) return rateLimitResponse;
+
+  if (!isSingleAssistantDispatchAllowed()) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          "Single-assistant dispatch is retired. Use /api/dispatch-squad or set ALLOW_SINGLE_ASSISTANT_DISPATCH=true for legacy eval only.",
+        canonical: "/api/dispatch-squad",
+      },
+      { status: 410 },
+    );
+  }
 
   let body: unknown;
 

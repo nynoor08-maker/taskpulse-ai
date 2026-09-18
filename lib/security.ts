@@ -6,6 +6,13 @@ import * as Sentry from "@sentry/nextjs";
 const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
 const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
+function isProductionRuntime() {
+  return (
+    process.env.NODE_ENV === "production" &&
+    process.env.NEXT_PHASE !== "phase-production-build"
+  );
+}
+
 const rateLimit =
   redisUrl && redisToken
     ? new Ratelimit({
@@ -26,7 +33,15 @@ export function clientIdentifier(request: Request) {
 }
 
 export async function enforceRateLimit(request: Request) {
-  if (!rateLimit) return null;
+  if (!rateLimit) {
+    if (isProductionRuntime()) {
+      return new Response(
+        JSON.stringify({ error: "Rate limiting is not configured." }),
+        { status: 503, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return null;
+  }
 
   const result = await rateLimit.limit(clientIdentifier(request));
   if (result.success) return null;

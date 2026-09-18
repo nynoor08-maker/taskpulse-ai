@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/server";
 import { getAppUrl } from "@/lib/app-url";
+import { applyVendorQuote } from "@/lib/vendor-quote";
 import { enforceRateLimit } from "@/lib/security";
 import { sendTaskSMS } from "@/lib/twilio";
 
@@ -26,34 +27,13 @@ function isQuotePayload(value: unknown): value is QuotePayload {
   );
 }
 
-type VendorTaskContext = {
-  supabase: Awaited<ReturnType<typeof createServiceClient>>;
-  vendor: {
-    id: string;
-    business_name: string;
-    phone_number: string;
-    user_id: string;
-  };
-  task: {
-    id: string;
-    title: string;
-    description: string | null;
-    status: string;
-    user_id: string;
-    target_vendor_phone: string | null;
-    organization_id: string | null;
-  };
-};
-
-async function requireVendorForTask(
-  taskId: string,
-): Promise<{ ok: true; context: VendorTaskContext } | { ok: false; response: NextResponse }> {
+async function requireVendorForTask(taskId: string) {
   const authClient = await createClient();
   const {
     data: { user },
   } = await authClient.auth.getUser();
   if (!user) {
-    return { ok: false, response: NextResponse.json({ error: "Authentication is required." }, { status: 401 }) };
+    return { ok: false as const, response: NextResponse.json({ error: "Authentication is required." }, { status: 401 }) };
   }
 
   const supabase = await createServiceClient();
@@ -63,11 +43,11 @@ async function requireVendorForTask(
     .eq("user_id", user.id)
     .maybeSingle();
   if (vendorError) {
-    return { ok: false, response: NextResponse.json({ error: vendorError.message }, { status: 500 }) };
+    return { ok: false as const, response: NextResponse.json({ error: vendorError.message }, { status: 500 }) };
   }
   if (!vendor) {
     return {
-      ok: false,
+      ok: false as const,
       response: NextResponse.json({ error: "No vendor profile is linked to this account." }, { status: 403 }),
     };
   }
@@ -78,14 +58,14 @@ async function requireVendorForTask(
     .eq("id", taskId)
     .maybeSingle();
   if (taskError) {
-    return { ok: false, response: NextResponse.json({ error: taskError.message }, { status: 500 }) };
+    return { ok: false as const, response: NextResponse.json({ error: taskError.message }, { status: 500 }) };
   }
   if (!task) {
-    return { ok: false, response: NextResponse.json({ error: "Task not found." }, { status: 404 }) };
+    return { ok: false as const, response: NextResponse.json({ error: "Task not found." }, { status: 404 }) };
   }
   if (task.target_vendor_phone !== vendor.phone_number) {
     return {
-      ok: false,
+      ok: false as const,
       response: NextResponse.json(
         { error: "This task is not assigned to your vendor phone number." },
         { status: 403 },
@@ -93,7 +73,7 @@ async function requireVendorForTask(
     };
   }
 
-  return { ok: true, context: { supabase, vendor, task } };
+  return { ok: true as const, supabase, vendor, task };
 }
 
 export async function GET(request: Request) {
@@ -108,7 +88,7 @@ export async function GET(request: Request) {
   const result = await requireVendorForTask(taskId);
   if (!result.ok) return result.response;
 
-  const { task } = result.context;
+  const { task } = result;
   return NextResponse.json({
     task: {
       id: task.id,
@@ -134,92 +114,44 @@ export async function POST(request: Request) {
 
   const result = await requireVendorForTask(body.taskId);
   if (!result.ok) return result.response;
-  const { supabase, vendor, task } = result.context;
+  const { supabase, vendor, task } = result;
 
   if (task.status === "completed") {
     return NextResponse.json({ error: "This task already has a completed quote." }, { status: 409 });
   }
 
-  const summaryNotes = body.notes?.trim()
-    ? `Vendor quote notes: ${body.notes.trim()}`
-    : "Quote submitted by vendor via fallback form.";
+  try {
+    const { callLogId } = await applyVendorQuote(supabase, {
+      taskId: task.id,
+      vendorPhone: vendor.phone_number,
+      organizationId: task.organization_id,
+      quotedPrice: body.quotedPrice,
+      availableTime: body.availableTime,
+      notes: body.notes,
+    });
 
-  const { data: existingLogs, error: existingError } = await supabase
-    .from("call_logs")
-    .select("id")
-    .eq("task_id", task.id)
-    .eq("vendor_phone", vendor.phone_number)
-    .order("created_at", { ascending: false })
-    .limit(1);
-  if (existingError) {
-    return NextResponse.json({ error: existingError.message }, { status: 500 });
-  }
+    const { data: customer } = await supabase
+      .from("profiles")
+      .select("phone_number")
+      .eq("id", task.user_id)
+      .maybeSingle();
 
-  const existingLogId = existingLogs?.[0]?.id;
-  let callLogId: string;
-
-  if (existingLogId) {
-    const { data: updated, error: updateError } = await supabase
-      .from("call_logs")
-      .update({
-        agreed_price: body.quotedPrice,
-        available_time: body.availableTime.trim(),
-        summary: summaryNotes,
-        status: "completed",
-        fallback_dispatched: true,
-      })
-      .eq("id", existingLogId)
-      .select("id")
-      .single();
-    if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 500 });
+    if (customer?.phone_number) {
+      try {
+        await sendTaskSMS(
+          customer.phone_number,
+          `TaskPulse: ${vendor.business_name} quoted $${body.quotedPrice.toFixed(2)} for '${task.title}' (${body.availableTime.trim()}). Review & pay: ${getAppUrl()}/dashboard`,
+        );
+      } catch {
+        // Quote is already saved; customer SMS is best-effort.
+      }
     }
-    callLogId = updated.id;
-  } else {
-    const { data: inserted, error: callError } = await supabase
-      .from("call_logs")
-      .insert({
-        organization_id: task.organization_id,
-        task_id: task.id,
-        vendor_phone: vendor.phone_number,
-        agreed_price: body.quotedPrice,
-        available_time: body.availableTime.trim(),
-        summary: summaryNotes,
-        status: "completed",
-        fallback_dispatched: true,
-      })
-      .select("id")
-      .single();
-    if (callError) {
-      return NextResponse.json({ error: callError.message }, { status: 500 });
-    }
-    callLogId = inserted.id;
+
+    return NextResponse.json({ success: true, callLogId }, { status: 201 });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to submit quote." },
+      { status: 500 },
+    );
   }
-
-  const { error: taskUpdateError } = await supabase
-    .from("tasks")
-    .update({ status: "completed" })
-    .eq("id", task.id);
-  if (taskUpdateError) {
-    return NextResponse.json({ error: taskUpdateError.message }, { status: 500 });
-  }
-
-  const { data: customer } = await supabase
-    .from("profiles")
-    .select("phone_number")
-    .eq("id", task.user_id)
-    .maybeSingle();
-
-  if (customer?.phone_number) {
-    try {
-      await sendTaskSMS(
-        customer.phone_number,
-        `TaskPulse: ${vendor.business_name} quoted $${body.quotedPrice.toFixed(2)} for '${task.title}' (${body.availableTime.trim()}). Review & pay: ${getAppUrl()}/dashboard`,
-      );
-    } catch {
-      // Quote is already saved; customer SMS is best-effort.
-    }
-  }
-
-  return NextResponse.json({ success: true, callLogId }, { status: 201 });
 }

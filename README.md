@@ -6,13 +6,13 @@ Autonomous voice negotiation and vendor dispatch for local service businesses.
 
 - Next.js App Router + TypeScript
 - Supabase Auth / Postgres / RLS
-- Vapi multi-agent squads (Triage → Negotiator → Closing)
-- Twilio SMS, Stripe Checkout, Sentry, optional Upstash rate limits
+- Vapi multi-agent squads (Triage → Negotiator → Closing) — **canonical dispatch path**
+- Twilio SMS, Stripe Checkout, Sentry, Upstash rate limits (required in production)
 
 ## Setup
 
-1. Copy `.env.local.example` to `.env.local` and fill in production values.
-2. Apply `schema.sql` to your Supabase project (includes profile bootstrap trigger and RLS).
+1. Copy `.env.local.example` to `.env.local` and fill production values (never commit secrets).
+2. Apply `schema.sql` in the Supabase SQL editor (profiles trigger, RLS, telephony vault helpers).
 3. Install and run:
 
 ```bash
@@ -20,15 +20,28 @@ npm install
 npm run dev
 ```
 
-## Launch checks
+## Launch checklist
 
 ```bash
-npm run check:launch   # env, webhook verification markers, RLS readiness
+npm run check:launch   # env, webhooks, squad markers, RLS, Upstash, Sentry
 npm run build
+npm run test:smoke     # code markers; set SMOKE_E2E_ALLOW=true for DB fixture flow
 npm run test:agent-eval
 ```
 
-Live call / load scripts require explicit opt-in env flags — see `.env.local.example`.
+Live call / load scripts require explicit opt-in flags — see `.env.local.example`.
+
+**Do not** set `ALLOW_SINGLE_ASSISTANT_DISPATCH=true` in production. `/api/dispatch-call` returns 410 unless that flag is set for legacy eval.
+
+## Canonical dispatch
+
+| Entry | Mechanism |
+| --- | --- |
+| `POST /api/tasks` | Session create + `placeVendorSquadCall` (dashboard) |
+| `POST /api/v1/tasks` | API key create + squad |
+| `POST /api/dispatch-squad` | Dial existing task via squad |
+| `POST /api/v1/tasks/inbound-dispatch` | Inbound intake + squad |
+| Vapi webhook retry | Next vendor via `placeVendorSquadCall` |
 
 ## Key surfaces
 
@@ -36,13 +49,10 @@ Live call / load scripts require explicit opt-in env flags — see `.env.local.e
 | --- | --- |
 | `/` | Marketing landing |
 | `/login` | Magic-link auth |
-| `/dashboard` | Customer completed tasks + Stripe pay |
-| `/vendor` | Vendor workspace |
+| `/dashboard` | Create jobs, track status, Stripe pay |
+| `/vendor` | Vendor workspace + accept-jobs toggle |
 | `/vendor/quote?taskId=` | Fallback quote form after missed calls |
 | `/admin` | Operations monitor + dispatch pause |
-| `/api/v1/tasks` | API task create + dispatch |
-| `/api/v1/tasks/inbound-dispatch` | Vapi inbound intake |
-| `/api/dispatch-squad` | Squad outbound dial |
-| `/api/webhooks/vapi` | Call completion, vendor pool retry, SMS |
+| `/api/health` | Dependency probes (Upstash required when `NODE_ENV=production`) |
 
 Set `NEXT_PUBLIC_APP_URL` to the deployment origin so tool callbacks, Stripe redirects, and SMS links stay environment-correct.
