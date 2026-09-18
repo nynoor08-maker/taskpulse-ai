@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/server";
 import { captureException, enforceRateLimit } from "@/lib/security";
 import { findNextVendor } from "@/lib/vendor-pool";
-import { placeVendorSquadCall, type SquadCallResult } from "@/lib/vapi/dispatch";
+import { dispatchAndRecordVendorCall } from "@/lib/vapi/dispatch";
 
 type JsonRecord = Record<string, unknown>;
 type ServiceClient = Awaited<ReturnType<typeof createServiceClient>>;
@@ -228,12 +228,13 @@ async function createTaskDispatch(
     };
   }
 
-  let vapiCall: SquadCallResult;
   try {
-    vapiCall = await placeVendorSquadCall({
+    await dispatchAndRecordVendorCall(supabase, {
       description: args.description,
       maxBudget: args.maxBudget,
       vendorPhone: vendor.phone_number,
+      taskId: task.id,
+      organizationId: vendor.organization_id,
     });
   } catch (error) {
     captureException(error, { route: "inbound-dispatch", taskId: task.id });
@@ -245,15 +246,6 @@ async function createTaskDispatch(
         "I've logged your request and matched a provider, but dispatch could not be started automatically. Our team will follow up shortly.",
     };
   }
-
-  const { error: callLogError } = await supabase.from("call_logs").insert({
-    organization_id: vendor.organization_id,
-    task_id: task.id,
-    vapi_call_id: vapiCall.id,
-    vendor_phone: vendor.phone_number,
-    status: "in_progress",
-  });
-  if (callLogError) throw new Error(`Unable to save call log: ${callLogError.message}`);
 
   const { data: dispatchedTask, error: dispatchError } = await supabase
     .from("tasks")

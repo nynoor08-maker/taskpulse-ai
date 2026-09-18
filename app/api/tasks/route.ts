@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/server";
-import { placeVendorSquadCall } from "@/lib/vapi/dispatch";
+import { dispatchAndRecordVendorCall } from "@/lib/vapi/dispatch";
 import { captureException, enforceRateLimit } from "@/lib/security";
 import { ensureProfileForUser } from "@/lib/ensure-profile";
 
@@ -89,34 +89,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ taskId: task.id, status: task.status, dispatched: false }, { status: 201 });
     }
 
-    const call = await placeVendorSquadCall({
+    const { call } = await dispatchAndRecordVendorCall(supabase, {
       description,
       maxBudget: body.maxBudget,
       vendorPhone: body.vendorPhone,
+      taskId: task.id,
     });
-
-    const { error: callLogError } = await supabase.from("call_logs").insert({
-      task_id: task.id,
-      vapi_call_id: call.id,
-      vendor_phone: body.vendorPhone,
-      status: "in_progress",
-    });
-    if (callLogError) throw new Error(`Unable to create call log: ${callLogError.message}`);
-
-    if (call.monitor?.controlUrl) {
-      const { data: callLog } = await supabase
-        .from("call_logs")
-        .select("id")
-        .eq("vapi_call_id", call.id)
-        .maybeSingle();
-      if (callLog) {
-        await supabase.from("call_monitor_credentials").insert({
-          call_log_id: callLog.id,
-          vapi_control_url: call.monitor.controlUrl,
-          vapi_listen_url: call.monitor.listenUrl ?? null,
-        });
-      }
-    }
 
     const { data: updated, error: updateError } = await supabase
       .from("tasks")

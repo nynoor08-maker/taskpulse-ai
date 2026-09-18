@@ -37,11 +37,11 @@ Live call / load scripts require explicit opt-in flags — see `.env.local.examp
 
 | Entry | Mechanism |
 | --- | --- |
-| `POST /api/tasks` | Session create + `placeVendorSquadCall` (dashboard) |
+| `POST /api/tasks` | Session create + `dispatchAndRecordVendorCall` (dashboard) |
 | `POST /api/v1/tasks` | API key create + squad |
 | `POST /api/dispatch-squad` | Dial existing task via squad |
 | `POST /api/v1/tasks/inbound-dispatch` | Inbound intake + squad |
-| Vapi webhook retry | Next vendor via `placeVendorSquadCall` |
+| Vapi webhook retry | Next vendor via `dispatchAndRecordVendorCall` |
 
 ## Key surfaces
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/server";
-import { placeVendorSquadCall } from "@/lib/vapi/dispatch";
+import { dispatchAndRecordVendorCall } from "@/lib/vapi/dispatch";
 import { captureException, enforceRateLimit } from "@/lib/security";
 
 type DispatchPayload = {
@@ -152,11 +152,13 @@ export async function POST(request: Request) {
 
   let call;
   try {
-    call = await placeVendorSquadCall({
+    ({ call } = await dispatchAndRecordVendorCall(supabase, {
       description: body.description,
       maxBudget: body.maxBudget,
       vendorPhone: body.phoneNumber,
-    });
+      taskId: task.id,
+      organizationId: task.organization_id,
+    }));
   } catch (error) {
     captureException(error, { route: "dispatch-squad", taskId: body.taskId });
     return NextResponse.json(
@@ -166,38 +168,6 @@ export async function POST(request: Request) {
       },
       { status: 502 },
     );
-  }
-
-  const { data: callLog, error: logError } = await supabase
-    .from("call_logs")
-    .insert({
-      organization_id: task.organization_id,
-      task_id: task.id,
-      vapi_call_id: call.id,
-      vendor_phone: body.phoneNumber,
-      status: "in_progress",
-    })
-    .select("id")
-    .single();
-  if (logError) {
-    return NextResponse.json(
-      { success: false, error: `Unable to save call log: ${logError.message}` },
-      { status: 500 },
-    );
-  }
-  if (call.monitor?.controlUrl) {
-    const { error: monitorError } = await supabase.from("call_monitor_credentials").insert({
-      call_log_id: callLog.id,
-      vapi_control_url: call.monitor.controlUrl,
-      vapi_listen_url: call.monitor.listenUrl ?? null,
-    });
-    if (monitorError) {
-      captureException(monitorError, {
-        route: "dispatch-squad",
-        callId: call.id,
-        operation: "save-monitor-credentials",
-      });
-    }
   }
 
   const { error: updateError } = await supabase
