@@ -31,10 +31,6 @@
     "**/*.mts"
   ],
   "exclude": [
-    "node_modules",
-    "dialog.tsx",
-    "sheet.tsx",
-    "layout.tsx",
-    "route.ts"
+    "node_modules"
   ]
 }

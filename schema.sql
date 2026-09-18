@@ -50,6 +50,10 @@ create table public.profiles (
   created_at timestamptz not null default now()
 );
 
+create unique index profiles_phone_number_unique_idx
+  on public.profiles (phone_number)
+  where phone_number is not null;
+
 create table public.organizations (
   id uuid primary key default uuid_generate_v4(),
   name text not null,
@@ -339,8 +343,9 @@ as $$
   from pg_tables
   where schemaname = 'public'
     and tablename in (
-      'organizations', 'organization_members', 'tasks', 'vendors', 'call_logs',
-      'prompt_variants', 'call_analytics', 'webhook_subscriptions'
+      'organizations', 'organization_members', 'profiles', 'tasks', 'vendors', 'call_logs',
+      'prompt_variants', 'call_analytics', 'webhook_subscriptions', 'api_keys',
+      'app_settings', 'idempotency_keys'
     )
   order by tablename;
 $$;
@@ -403,6 +408,16 @@ create policy "Users can view their own profile"
   to authenticated
   using ((select auth.uid()) = id);
 
+create policy "Users can insert their own profile"
+  on public.profiles
+  for insert
+  to authenticated
+  with check (
+    (select auth.uid()) = id
+    and role = 'customer'
+    and is_admin = false
+  );
+
 create policy "Users can update their own profile"
   on public.profiles
   for update
@@ -413,6 +428,32 @@ create policy "Users can update their own profile"
     and role = (select role from public.profiles where id = (select auth.uid()))
     and is_admin = (select is_admin from public.profiles where id = (select auth.uid()))
   );
+
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (id, email, full_name, role, is_admin)
+  values (
+    new.id,
+    new.email,
+    coalesce(new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'name'),
+    'customer',
+    false
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row
+  execute function public.handle_new_user();
 
 update public.profiles
 set role = 'admin'

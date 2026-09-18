@@ -1,5 +1,5 @@
 {
-  "name": "world-orchestrator",
+  "name": "taskpulse-ai",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -10,6 +10,7 @@
     "test:agent-eval": "tsx scripts/test-agent-eval.ts",
     "test:load": "tsx scripts/load-test-concurrency.ts",
     "check:launch": "tsx scripts/launch-check.ts",
+    "test:smoke": "tsx scripts/smoke-e2e.ts",
     "test:live-voice": "tsx scripts/test-live-voice.ts"
   },
   "dependencies": {

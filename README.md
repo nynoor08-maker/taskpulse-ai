@@ -1,36 +1,58 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TaskPulse AI
 
-## Getting Started
+Autonomous voice negotiation and vendor dispatch for local service businesses.
 
-First, run the development server:
+## Stack
+
+- Next.js App Router + TypeScript
+- Supabase Auth / Postgres / RLS
+- Vapi multi-agent squads (Triage → Negotiator → Closing) — **canonical dispatch path**
+- Twilio SMS, Stripe Checkout, Sentry, Upstash rate limits (required in production)
+
+## Setup
+
+1. Copy `.env.local.example` to `.env.local` and fill production values (never commit secrets).
+2. Apply `schema.sql` in the Supabase SQL editor (profiles trigger, RLS, telephony vault helpers).
+3. Install and run:
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Launch checklist
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run check:launch   # env, webhooks, squad markers, RLS, Upstash, Sentry
+npm run build
+npm run test:smoke     # code markers; set SMOKE_E2E_ALLOW=true for DB fixture flow
+npm run test:agent-eval
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Live call / load scripts require explicit opt-in flags — see `.env.local.example`.
 
-## Learn More
+**Do not** set `ALLOW_SINGLE_ASSISTANT_DISPATCH=true` in production. `/api/dispatch-call` returns 410 unless that flag is set for legacy eval.
 
-To learn more about Next.js, take a look at the following resources:
+## Canonical dispatch
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Entry | Mechanism |
+| --- | --- |
+| `POST /api/tasks` | Session create + `placeVendorSquadCall` (dashboard) |
+| `POST /api/v1/tasks` | API key create + squad |
+| `POST /api/dispatch-squad` | Dial existing task via squad |
+| `POST /api/v1/tasks/inbound-dispatch` | Inbound intake + squad |
+| Vapi webhook retry | Next vendor via `placeVendorSquadCall` |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Key surfaces
 
-## Deploy on Vercel
+| Path | Purpose |
+| --- | --- |
+| `/` | Marketing landing |
+| `/login` | Magic-link auth |
+| `/dashboard` | Create jobs, track status, Stripe pay |
+| `/vendor` | Vendor workspace + accept-jobs toggle |
+| `/vendor/quote?taskId=` | Fallback quote form after missed calls |
+| `/admin` | Operations monitor + dispatch pause |
+| `/api/health` | Dependency probes (Upstash required when `NODE_ENV=production`) |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Set `NEXT_PUBLIC_APP_URL` to the deployment origin so tool callbacks, Stripe redirects, and SMS links stay environment-correct.
