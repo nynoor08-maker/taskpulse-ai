@@ -22,20 +22,18 @@ function QuoteForm() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(taskId));
 
   useEffect(() => {
-    if (!taskId) {
-      setError("A taskId query parameter is required.");
-      setLoading(false);
-      return;
-    }
+    if (!taskId) return;
 
+    let cancelled = false;
     void (async () => {
       const response = await fetch(`/api/vendor/quotes?taskId=${encodeURIComponent(taskId)}`, {
         cache: "no-store",
       });
       const data: unknown = await response.json().catch(() => null);
+      if (cancelled) return;
       if (!response.ok) {
         const message =
           data &&
@@ -60,6 +58,10 @@ function QuoteForm() {
       setTask((data as { task: TaskSummary }).task);
       setLoading(false);
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [taskId]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -94,6 +96,19 @@ function QuoteForm() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (!taskId) {
+    return (
+      <div className="space-y-3">
+        <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          A taskId query parameter is required.
+        </p>
+        <Link className="text-sm font-medium text-slate-800 underline" href="/vendor">
+          Back to vendor workspace
+        </Link>
+      </div>
+    );
   }
 
   if (loading) {
