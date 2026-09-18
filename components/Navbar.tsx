@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { BrandMark } from "@/components/BrandMark";
 import { ensureBrowserProfile, type ProfileSummary } from "@/lib/ensure-profile-browser";
@@ -10,6 +11,7 @@ const supabaseConfigured = Boolean(
 );
 
 export function Navbar() {
+  const pathname = usePathname();
   const [profile, setProfile] = useState<ProfileSummary | null>(null);
   const [loaded, setLoaded] = useState(!supabaseConfigured);
 
@@ -32,6 +34,7 @@ export function Navbar() {
   const isAdmin = Boolean(profile && (profile.is_admin || profile.role === "admin"));
   const mainHref = profile?.role === "vendor" ? "/vendor" : "/dashboard";
   const mainLabel = profile?.role === "vendor" ? "Vendor" : "Dashboard";
+  const showSignIn = loaded && !profile && pathname !== "/login";
 
   return (
     <nav className="sticky top-0 z-40 border-b border-border/70 bg-white/80 px-4 backdrop-blur-md sm:px-6">
@@ -61,7 +64,7 @@ export function Navbar() {
               )}
             </>
           )}
-          {loaded && !profile && (
+          {showSignIn && (
             <Link className="tp-btn-primary !py-1.5 !text-xs" href="/login">
               Sign in
             </Link>
