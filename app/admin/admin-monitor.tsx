@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/client";
+import { Alert, PageHeader } from "@/components/ui-kit";
 
 type CallLog = {
   id: string;
@@ -9,7 +10,7 @@ type CallLog = {
   call_duration: number | null;
   status: string | null;
   created_at: string;
-  tasks: Array<{ target_vendor_phone: string | null }>;
+  tasks: Array<{ target_vendor_phone: string | null }> | { target_vendor_phone: string | null } | null;
 };
 
 type Metrics = {
@@ -42,7 +43,6 @@ function CallDuration({ call }: { call: CallLog }) {
 
   useEffect(() => {
     if (call.status !== "in_progress" || call.call_duration != null) return;
-
     const interval = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(interval);
   }, [call.call_duration, call.status]);
@@ -50,7 +50,7 @@ function CallDuration({ call }: { call: CallLog }) {
   const elapsed =
     call.call_duration ??
     Math.max(0, Math.floor((now - Date.parse(call.created_at)) / 1_000));
-  return <span>{formatDuration(elapsed)}</span>;
+  return <span className="tabular-nums">{formatDuration(elapsed)}</span>;
 }
 
 export function AdminMonitor({
@@ -135,70 +135,82 @@ export function AdminMonitor({
   }
 
   const cards = [
-    { label: "Total tasks dispatched", value: metrics.totalTasks.toLocaleString() },
-    { label: "Call completion rate", value: `${metrics.completionRate.toFixed(1)}%` },
-    { label: "Average negotiation savings", value: formatCurrency(metrics.averageSavings) },
-    { label: "Total platform volume", value: formatCurrency(metrics.platformVolume) },
+    { label: "Tasks dispatched", value: metrics.totalTasks.toLocaleString() },
+    { label: "Completion rate", value: `${metrics.completionRate.toFixed(1)}%` },
+    { label: "Avg. savings", value: formatCurrency(metrics.averageSavings) },
+    { label: "Platform volume", value: formatCurrency(metrics.platformVolume) },
   ];
 
   return (
-    <main className="mx-auto min-h-screen max-w-7xl px-6 py-10">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-wider text-slate-500">
-            Operations
-          </p>
-          <h1 className="text-3xl font-semibold">Admin monitoring</h1>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={dispatchPaused}
-          disabled={isUpdatingPause}
-          onClick={() => void updateDispatchPause()}
-          className={[
-            "rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50",
-            dispatchPaused ? "bg-red-700" : "bg-slate-900",
-          ].join(" ")}
-        >
-          {isUpdatingPause
-            ? "Updating dispatches..."
-            : dispatchPaused
-              ? "Emergency Pause Active"
-              : "Emergency Pause All Dispatches"}
-        </button>
-      </div>
+    <main className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-6xl px-6 py-10 sm:py-12">
+      <PageHeader
+        eyebrow="Operations"
+        title="Live monitor"
+        description="Watch active negotiations and pause outbound dispatch if something goes wrong."
+        action={
+          <button
+            type="button"
+            role="switch"
+            aria-checked={dispatchPaused}
+            disabled={isUpdatingPause}
+            onClick={() => void updateDispatchPause()}
+            className={dispatchPaused ? "tp-btn-danger" : "tp-btn-primary"}
+          >
+            {isUpdatingPause
+              ? "Updating…"
+              : dispatchPaused
+                ? "Emergency pause active"
+                : "Pause all dispatches"}
+          </button>
+        }
+      />
 
-      {error && <p className="mt-4 text-sm text-red-700">{error}</p>}
+      {error ? (
+        <div className="mt-4">
+          <Alert>{error}</Alert>
+        </div>
+      ) : null}
 
       <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((card) => (
-          <article key={card.label} className="rounded-xl border bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-600">{card.label}</p>
-            <p className="mt-2 text-2xl font-semibold">{card.value}</p>
+          <article key={card.label} className="tp-surface p-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              {card.label}
+            </p>
+            <p className="mt-3 font-heading text-3xl tracking-tight text-ink">{card.value}</p>
           </article>
         ))}
       </section>
 
-      <section className="mt-8">
-        <h2 className="text-xl font-semibold">Live voice call feed</h2>
-        <div className="mt-4 overflow-hidden rounded-xl border bg-white">
+      <section className="mt-10">
+        <h2 className="font-heading text-xl text-ink">Voice call feed</h2>
+        <div className="tp-surface mt-4 overflow-hidden">
           {visibleCalls.length === 0 ? (
-            <p className="p-6 text-sm text-slate-600">No recent calls to display.</p>
+            <p className="p-6 text-sm text-muted-foreground">No recent calls to display.</p>
           ) : (
-            <ul className="divide-y">
-              {visibleCalls.map((call) => (
-                <li key={call.id} className="grid gap-2 p-4 text-sm sm:grid-cols-4">
-                  <span className="font-mono text-xs">
-                    {call.vapi_call_id ?? "Awaiting Vapi call ID"}
-                  </span>
-                  <span>{(Array.isArray(call.tasks) ? call.tasks[0] : call.tasks)?.target_vendor_phone ?? "Unknown target"}</span>
-                  <CallDuration call={call} />
-                  <span className="font-medium">
-                    {call.status === "in_progress" ? "in progress" : "ended"}
-                  </span>
-                </li>
-              ))}
+            <ul className="divide-y divide-border">
+              {visibleCalls.map((call) => {
+                const task = Array.isArray(call.tasks) ? call.tasks[0] : call.tasks;
+                return (
+                  <li
+                    key={call.id}
+                    className="grid gap-2 px-5 py-4 text-sm sm:grid-cols-4 sm:items-center"
+                  >
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {call.vapi_call_id ?? "Awaiting Vapi call ID"}
+                    </span>
+                    <span className="text-ink">{task?.target_vendor_phone ?? "Unknown target"}</span>
+                    <CallDuration call={call} />
+                    <span
+                      className={`font-semibold ${
+                        call.status === "in_progress" ? "text-pulse" : "text-muted-foreground"
+                      }`}
+                    >
+                      {call.status === "in_progress" ? "in progress" : call.status ?? "ended"}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

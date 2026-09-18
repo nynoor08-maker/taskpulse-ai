@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { BrandMark } from "@/components/BrandMark";
 import { ensureBrowserProfile, type ProfileSummary } from "@/lib/ensure-profile-browser";
 
 const supabaseConfigured = Boolean(
@@ -30,31 +31,42 @@ export function Navbar() {
 
   const isAdmin = Boolean(profile && (profile.is_admin || profile.role === "admin"));
   const mainHref = profile?.role === "vendor" ? "/vendor" : "/dashboard";
-  const mainLabel = profile?.role === "vendor" ? "Vendor workspace" : "Dashboard";
+  const mainLabel = profile?.role === "vendor" ? "Vendor" : "Dashboard";
 
   return (
-    <nav className="border-b border-slate-200/80 bg-white/90 px-6 py-3 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center gap-5 text-sm">
-        <Link className="font-semibold tracking-tight text-slate-900" href="/">
-          TaskPulse AI
+    <nav className="sticky top-0 z-40 border-b border-border/70 bg-white/80 px-4 backdrop-blur-md sm:px-6">
+      <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 text-sm">
+        <Link className="flex items-center gap-2.5 font-semibold tracking-tight text-ink" href="/">
+          <BrandMark className="h-7 w-7" />
+          <span className="font-heading text-lg">
+            TaskPulse <span className="text-pulse">AI</span>
+          </span>
         </Link>
-        {loaded && profile && (
-          <>
-            <Link className="text-slate-600 hover:text-slate-900" href={mainHref}>
-              {mainLabel}
-            </Link>
-            {isAdmin && (
-              <Link className="text-slate-600 hover:text-slate-900" href="/admin">
-                Operations
+        <div className="ml-auto flex items-center gap-1 sm:gap-2">
+          {loaded && profile && (
+            <>
+              <Link
+                className="rounded-lg px-3 py-1.5 text-muted-foreground transition hover:bg-mist hover:text-ink"
+                href={mainHref}
+              >
+                {mainLabel}
               </Link>
-            )}
-          </>
-        )}
-        {loaded && !profile && (
-          <Link className="ml-auto text-slate-600 hover:text-slate-900" href="/login">
-            Sign in
-          </Link>
-        )}
+              {isAdmin && (
+                <Link
+                  className="rounded-lg px-3 py-1.5 text-muted-foreground transition hover:bg-mist hover:text-ink"
+                  href="/admin"
+                >
+                  Operations
+                </Link>
+              )}
+            </>
+          )}
+          {loaded && !profile && (
+            <Link className="tp-btn-primary !py-1.5 !text-xs" href="/login">
+              Sign in
+            </Link>
+          )}
+        </div>
       </div>
     </nav>
   );
