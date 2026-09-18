@@ -9,8 +9,13 @@ export function Navbar() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      setLoaded(true);
+      return;
+    }
     void ensureBrowserProfile()
       .then((next) => setProfile(next))
+      .catch(() => null)
       .finally(() => setLoaded(true));
   }, []);
 

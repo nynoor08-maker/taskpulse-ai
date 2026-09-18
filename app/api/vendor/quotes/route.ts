@@ -144,22 +144,56 @@ export async function POST(request: Request) {
     ? `Vendor quote notes: ${body.notes.trim()}`
     : "Quote submitted by vendor via fallback form.";
 
-  const { data: callLog, error: callError } = await supabase
+  const { data: existingLogs, error: existingError } = await supabase
     .from("call_logs")
-    .insert({
-      organization_id: task.organization_id,
-      task_id: task.id,
-      vendor_phone: vendor.phone_number,
-      agreed_price: body.quotedPrice,
-      available_time: body.availableTime.trim(),
-      summary: summaryNotes,
-      status: "completed",
-      fallback_dispatched: true,
-    })
     .select("id")
-    .single();
-  if (callError) {
-    return NextResponse.json({ error: callError.message }, { status: 500 });
+    .eq("task_id", task.id)
+    .eq("vendor_phone", vendor.phone_number)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (existingError) {
+    return NextResponse.json({ error: existingError.message }, { status: 500 });
+  }
+
+  const existingLogId = existingLogs?.[0]?.id;
+  let callLogId: string;
+
+  if (existingLogId) {
+    const { data: updated, error: updateError } = await supabase
+      .from("call_logs")
+      .update({
+        agreed_price: body.quotedPrice,
+        available_time: body.availableTime.trim(),
+        summary: summaryNotes,
+        status: "completed",
+        fallback_dispatched: true,
+      })
+      .eq("id", existingLogId)
+      .select("id")
+      .single();
+    if (updateError) {
+      return NextResponse.json({ error: updateError.message }, { status: 500 });
+    }
+    callLogId = updated.id;
+  } else {
+    const { data: inserted, error: callError } = await supabase
+      .from("call_logs")
+      .insert({
+        organization_id: task.organization_id,
+        task_id: task.id,
+        vendor_phone: vendor.phone_number,
+        agreed_price: body.quotedPrice,
+        available_time: body.availableTime.trim(),
+        summary: summaryNotes,
+        status: "completed",
+        fallback_dispatched: true,
+      })
+      .select("id")
+      .single();
+    if (callError) {
+      return NextResponse.json({ error: callError.message }, { status: 500 });
+    }
+    callLogId = inserted.id;
   }
 
   const { error: taskUpdateError } = await supabase
@@ -187,5 +221,5 @@ export async function POST(request: Request) {
     }
   }
 
-  return NextResponse.json({ success: true, callLogId: callLog.id }, { status: 201 });
+  return NextResponse.json({ success: true, callLogId }, { status: 201 });
 }

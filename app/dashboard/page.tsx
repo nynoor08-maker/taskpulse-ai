@@ -8,7 +8,7 @@ type Task = {
   title: string;
   status: "pending" | "in_progress" | "completed" | "failed";
   payment_status: "unpaid" | "paid";
-  call_logs: Array<{ agreed_price: number | null }>;
+  call_logs: Array<{ agreed_price: number | null; created_at?: string }>;
 };
 
 function formatPrice(price: number) {
@@ -43,7 +43,7 @@ export default function DashboardPage() {
 
       const { data, error: queryError } = await supabase
         .from("tasks")
-        .select("id, title, status, payment_status, call_logs(agreed_price)")
+        .select("id, title, status, payment_status, call_logs(agreed_price, created_at)")
         .in("status", ["pending", "in_progress", "completed", "failed"])
         .order("created_at", { ascending: false });
 
@@ -118,9 +118,12 @@ export default function DashboardPage() {
           </p>
         ) : null}
         {tasks.map((task) => {
-          const agreedPrice = Array.isArray(task.call_logs)
-            ? task.call_logs[0]?.agreed_price
-            : null;
+          const logs = Array.isArray(task.call_logs) ? task.call_logs : [];
+          const agreedPrice =
+            [...logs]
+              .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))
+              .find((log) => typeof log.agreed_price === "number" && log.agreed_price > 0)
+              ?.agreed_price ?? null;
           const canPay =
             task.status === "completed" &&
             task.payment_status === "unpaid" &&
