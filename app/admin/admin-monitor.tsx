@@ -192,7 +192,7 @@ export function AdminMonitor({
                   <span className="font-mono text-xs">
                     {call.vapi_call_id ?? "Awaiting Vapi call ID"}
                   </span>
-                  <span>{call.tasks[0]?.target_vendor_phone ?? "Unknown target"}</span>
+                  <span>{(Array.isArray(call.tasks) ? call.tasks[0] : call.tasks)?.target_vendor_phone ?? "Unknown target"}</span>
                   <CallDuration call={call} />
                   <span className="font-medium">
                     {call.status === "in_progress" ? "in progress" : "ended"}

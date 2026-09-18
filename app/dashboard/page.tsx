@@ -44,7 +44,7 @@ export default function DashboardPage() {
       const { data, error: queryError } = await supabase
         .from("tasks")
         .select("id, title, status, payment_status, call_logs(agreed_price)")
-        .eq("status", "completed")
+        .in("status", ["pending", "in_progress", "completed", "failed"])
         .order("created_at", { ascending: false });
 
       if (!isActive) return;
@@ -106,22 +106,35 @@ export default function DashboardPage() {
 
   return (
     <main className="mx-auto min-h-screen max-w-4xl px-6 py-10">
-      <h1 className="text-3xl font-semibold">Completed tasks</h1>
+      <h1 className="text-3xl font-semibold tracking-tight">Your tasks</h1>
       <p className="mt-2 text-slate-600">
-        Confirm agreed quotes and complete payment for your vendor bookings.
+        Track negotiation progress and pay confirmed vendor quotes.
       </p>
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
       <div className="mt-6 space-y-4">
+        {tasks.length === 0 && !error ? (
+          <p className="rounded-xl border bg-white p-5 text-sm text-slate-600">
+            No tasks yet. Create one through the API or an inbound call.
+          </p>
+        ) : null}
         {tasks.map((task) => {
-          const agreedPrice = task.call_logs[0]?.agreed_price;
+          const agreedPrice = Array.isArray(task.call_logs)
+            ? task.call_logs[0]?.agreed_price
+            : null;
           const canPay =
+            task.status === "completed" &&
             task.payment_status === "unpaid" &&
             typeof agreedPrice === "number" &&
             agreedPrice > 0;
 
           return (
             <article key={task.id} className="rounded-xl border bg-white p-5 shadow-sm">
-              <h2 className="font-medium">{task.title}</h2>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <h2 className="font-medium">{task.title}</h2>
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-slate-600">
+                  {task.status.replaceAll("_", " ")}
+                </span>
+              </div>
               {task.payment_status === "paid" ? (
                 <p className="mt-2 text-sm font-medium text-emerald-700">Paid</p>
               ) : canPay ? (
@@ -135,8 +148,16 @@ export default function DashboardPage() {
                     ? "Opening checkout..."
                     : `Pay & Confirm Booking (${formatPrice(agreedPrice)})`}
                 </button>
-              ) : (
+              ) : task.status === "completed" ? (
                 <p className="mt-2 text-sm text-slate-600">No agreed quote available.</p>
+              ) : (
+                <p className="mt-2 text-sm text-slate-600">
+                  {task.status === "in_progress"
+                    ? "Negotiation in progress."
+                    : task.status === "failed"
+                      ? "Dispatch failed — a backup vendor may still send a quote."
+                      : "Waiting for dispatch."}
+                </p>
               )}
             </article>
           );

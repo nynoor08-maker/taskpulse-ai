@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/server";
+import { asOne } from "@/lib/relations";
 
 type Intervention = "takeover" | "mute_assistant" | "unmute_assistant" | "end_call";
 
@@ -30,7 +31,7 @@ export async function POST(
   if (!membership || !["owner", "admin"].includes(membership.role)) {
     return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
   }
-  const organization = membership.organizations[0];
+  const organization = asOne(membership.organizations);
   if (!organization) return NextResponse.json({ error: "Organization not found." }, { status: 404 });
   const organizationId = organization.id;
   const { data: callLog, error: callError } = await supabase

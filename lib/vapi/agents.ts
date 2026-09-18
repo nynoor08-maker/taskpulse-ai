@@ -1,12 +1,14 @@
+import { getAppUrl } from "@/lib/app-url";
+
 type AgentContext = {
   taskDescription: string;
   maxBudget: number | null;
   vendorPhone: string;
 };
 
-const toolServer = {
-  url: "https://taskpulse-ai.vercel.app/api/vapi/tools",
-};
+function toolServer() {
+  return { url: `${getAppUrl()}/api/vapi/tools` };
+}
 
 /** Builds a Vapi "handoff" tool that silently transfers the call to another squad member. */
 function handoffTool(assistantName: string, description: string, functionName: string) {
@@ -45,7 +47,7 @@ const checkVendorAvailabilityTool = {
       required: ["vendorPhone", "requestedDate"],
     },
   },
-  server: toolServer,
+  server: toolServer(),
 };
 
 /**

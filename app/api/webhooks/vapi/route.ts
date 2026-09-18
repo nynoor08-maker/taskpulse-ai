@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/server";
+import { getAppUrl } from "@/lib/app-url";
 import { dispatchFallback } from "@/lib/fallback-dispatcher";
 import { dispatchWebhookEvent } from "@/lib/events/webhook-dispatcher";
 import { analyzeCallLog } from "@/lib/conversation-analytics";
@@ -389,7 +390,7 @@ export async function POST(request: Request) {
   try {
     await sendTaskSMS(
       profile.phone_number,
-      `TaskPulse Alert: Your AI agent finished negotiating task '${task.title}'. Agreed Price: $${formatPrice(callLog.agreed_price)}. View summary & pay here: https://taskpulse-ai.vercel.app/dashboard`,
+      `TaskPulse Alert: Your AI agent finished negotiating task '${task.title}'. Agreed Price: $${formatPrice(callLog.agreed_price)}. View summary & pay here: ${getAppUrl()}/dashboard`,
     );
   } catch (error) {
     captureException(error, { route: "vapi-webhook", callId, operation: "customer-notification" });
