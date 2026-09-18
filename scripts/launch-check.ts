@@ -92,11 +92,11 @@ async function main() {
   if (!dispatchCall.includes("isSingleAssistantDispatchAllowed")) {
     failures.push("dispatch-call must gate legacy single-assistant mode.");
   }
-  if (!dispatchSquad.includes("placeVendorSquadCall")) {
-    failures.push("dispatch-squad must use placeVendorSquadCall.");
+  if (!dispatchSquad.includes("dispatchAndRecordVendorCall")) {
+    failures.push("dispatch-squad must use dispatchAndRecordVendorCall (transactional squad dispatch).");
   }
-  if (!v1Tasks.includes("placeVendorSquadCall")) {
-    failures.push("API task create must dispatch via placeVendorSquadCall (squad).");
+  if (!v1Tasks.includes("dispatchAndRecordVendorCall")) {
+    failures.push("API task create must dispatch via dispatchAndRecordVendorCall (squad).");
   }
   if (process.env.ALLOW_SINGLE_ASSISTANT_DISPATCH === "true") {
     failures.push(
