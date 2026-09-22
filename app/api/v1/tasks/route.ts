@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/server";
 import { captureException, enforceRateLimit } from "@/lib/security";
 import { placeVendorSquadCall } from "@/lib/vapi/dispatch";
+import { checkDailyDispatchLimit } from "@/lib/dispatch-limit";
 import { createHash } from "node:crypto";
 
 type TaskPayload = {
@@ -102,6 +103,18 @@ export async function POST(request: Request) {
       .select("id, status")
       .single();
     if (taskError) throw new Error(`Unable to create task: ${taskError.message}`);
+
+    const dispatchLimit = await checkDailyDispatchLimit(supabase, apiKey.created_by_user_id);
+    if (!dispatchLimit.ok) {
+      return NextResponse.json(
+        { error: dispatchLimit.error, taskId: task.id },
+        {
+          status: dispatchLimit.status,
+          headers:
+            dispatchLimit.status === 429 ? { "Retry-After": "86400" } : undefined,
+        },
+      );
+    }
 
     const call = await placeVendorSquadCall({
       description: payload.description,

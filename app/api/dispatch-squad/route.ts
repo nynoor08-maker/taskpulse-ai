@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/server";
 import { placeVendorSquadCall } from "@/lib/vapi/dispatch";
+import { checkDailyDispatchLimit } from "@/lib/dispatch-limit";
 import { captureException, enforceRateLimit } from "@/lib/security";
 
 type DispatchPayload = {
@@ -113,41 +114,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data: recentTasks, error: recentTasksError } = await supabase
-    .from("tasks")
-    .select("id")
-    .eq("user_id", user.id)
-    .gte("created_at", windowStart);
-  if (recentTasksError) {
+  const dispatchLimit = await checkDailyDispatchLimit(supabase, user.id);
+  if (!dispatchLimit.ok) {
     return NextResponse.json(
-      { success: false, error: `Unable to check dispatch limit: ${recentTasksError.message}` },
-      { status: 500 },
+      { success: false, error: dispatchLimit.error },
+      {
+        status: dispatchLimit.status,
+        headers: dispatchLimit.status === 429 ? { "Retry-After": "86400" } : undefined,
+      },
     );
-  }
-
-  const taskIds = (recentTasks ?? []).map((recentTask) => recentTask.id);
-  if (taskIds.length > 0) {
-    const { count, error: rateLimitError } = await supabase
-      .from("call_logs")
-      .select("id", { count: "exact", head: true })
-      .in("task_id", taskIds);
-    if (rateLimitError) {
-      return NextResponse.json(
-        { success: false, error: `Unable to check dispatch limit: ${rateLimitError.message}` },
-        { status: 500 },
-      );
-    }
-    if ((count ?? 0) >= 5) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Daily dispatch limit reached. You can dispatch up to 5 calls every 24 hours.",
-        },
-        { status: 429, headers: { "Retry-After": "86400" } },
-      );
-    }
   }
 
   let call;

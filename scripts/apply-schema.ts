@@ -45,14 +45,16 @@ async function applyViaManagementApi(sql: string) {
   );
   if (!response.ok) {
     const body = await response.text();
-    // Idempotent re-apply: same content hash already recorded as a migration.
-    if (
-      response.status === 400 ||
+    // Only treat genuine duplicate-migration responses as success — never blanket 400s.
+    const duplicate =
       response.status === 409 ||
-      /already exists|duplicate|conflict/i.test(body)
-    ) {
+      (response.status === 400 &&
+        /already exists|duplicate|conflict|already (been )?applied|migration .+ exists/i.test(
+          body,
+        ));
+    if (duplicate) {
       console.log(
-        `Schema migration ${name} already applied (or conflicted) on project ${projectRef}; treating as success.`,
+        `Schema migration ${name} already applied on project ${projectRef}; treating as success.`,
       );
       console.log(`API response: ${body.slice(0, 400)}`);
       return;

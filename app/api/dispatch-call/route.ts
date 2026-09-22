@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/server";
 import { captureException, enforceRateLimit } from "@/lib/security";
 import { isSingleAssistantDispatchAllowed } from "@/lib/dispatch-mode";
+import { checkDailyDispatchLimit } from "@/lib/dispatch-limit";
 
 type DispatchPayload = {
   taskId: string;
@@ -177,55 +178,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data: recentTasks, error: rateLimitTaskError } = await supabase
-    .from("tasks")
-    .select("id")
-    .eq("user_id", user.id)
-    .gte("created_at", windowStart);
-
-  if (rateLimitTaskError) {
+  const dispatchLimit = await checkDailyDispatchLimit(supabase, user.id);
+  if (!dispatchLimit.ok) {
     return NextResponse.json(
+      { success: false, error: dispatchLimit.error },
       {
-        success: false,
-        error: `Unable to check dispatch limit: ${rateLimitTaskError.message}`,
-      },
-      { status: 500 },
-    );
-  }
-
-  const recentTaskIds = (recentTasks ?? []).map((recentTask) => recentTask.id);
-  let dispatchCount = 0;
-
-  if (recentTaskIds.length > 0) {
-    const { count, error: rateLimitError } = await supabase
-      .from("call_logs")
-      .select("id", { count: "exact", head: true })
-      .in("task_id", recentTaskIds);
-
-    if (rateLimitError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Unable to check dispatch limit: ${rateLimitError.message}`,
-        },
-        { status: 500 },
-      );
-    }
-
-    dispatchCount = count ?? 0;
-  }
-
-  if (dispatchCount >= 5) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "Daily dispatch limit reached. You can dispatch up to 5 calls every 24 hours.",
-      },
-      {
-        status: 429,
-        headers: { "Retry-After": "86400" },
+        status: dispatchLimit.status,
+        headers: dispatchLimit.status === 429 ? { "Retry-After": "86400" } : undefined,
       },
     );
   }

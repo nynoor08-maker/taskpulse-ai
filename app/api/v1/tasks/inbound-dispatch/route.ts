@@ -3,6 +3,7 @@ import { createServiceClient } from "@/server";
 import { captureException, enforceRateLimit } from "@/lib/security";
 import { findNextVendor } from "@/lib/vendor-pool";
 import { placeVendorSquadCall, type SquadCallResult } from "@/lib/vapi/dispatch";
+import { checkDailyDispatchLimit } from "@/lib/dispatch-limit";
 
 type JsonRecord = Record<string, unknown>;
 type ServiceClient = Awaited<ReturnType<typeof createServiceClient>>;
@@ -209,6 +210,19 @@ async function createTaskDispatch(
       status: task.status,
       vendorMatched: false,
       message: `I've logged your request, but we don't have an available ${args.category.replace(/_/g, " ")} provider in our network right now. Our team will follow up as soon as one becomes available.`,
+    };
+  }
+
+  const dispatchLimit = await checkDailyDispatchLimit(supabase, userId);
+  if (!dispatchLimit.ok) {
+    return {
+      taskId: task.id,
+      status: task.status,
+      vendorMatched: true,
+      message:
+        dispatchLimit.status === 429
+          ? "I've logged your request, but we've hit today's outbound call limit for this account. Our team will follow up as soon as capacity opens."
+          : "I've logged your request, but I couldn't verify dispatch capacity right now. Our team will follow up shortly.",
     };
   }
 

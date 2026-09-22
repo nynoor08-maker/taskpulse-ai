@@ -129,6 +129,13 @@ async function main() {
   if (!v1Tasks.includes("placeVendorSquadCall")) {
     failures.push("API task create must dispatch via placeVendorSquadCall (squad).");
   }
+  const dashboardTasks = await readFile("app/api/tasks/route.ts", "utf8");
+  if (!dashboardTasks.includes("checkDailyDispatchLimit")) {
+    failures.push("Dashboard task create must enforce the daily dispatch limit.");
+  }
+  if (!v1Tasks.includes("checkDailyDispatchLimit")) {
+    failures.push("API task create must enforce the daily dispatch limit.");
+  }
   if (!security.includes("enforceWebhookRateLimit")) {
     failures.push("Signed webhooks must use a dedicated webhook rate-limit bucket.");
   }

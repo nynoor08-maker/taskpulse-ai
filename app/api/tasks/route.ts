@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/server";
 import { placeVendorSquadCall } from "@/lib/vapi/dispatch";
+import { checkDailyDispatchLimit } from "@/lib/dispatch-limit";
 import { captureException, enforceRateLimit } from "@/lib/security";
 import { ensureProfileForUser } from "@/lib/ensure-profile";
 
@@ -87,6 +88,18 @@ export async function POST(request: Request) {
 
     if (!shouldDispatch) {
       return NextResponse.json({ taskId: task.id, status: task.status, dispatched: false }, { status: 201 });
+    }
+
+    const dispatchLimit = await checkDailyDispatchLimit(supabase, user.id);
+    if (!dispatchLimit.ok) {
+      return NextResponse.json(
+        { error: dispatchLimit.error, taskId: task.id, dispatched: false },
+        {
+          status: dispatchLimit.status,
+          headers:
+            dispatchLimit.status === 429 ? { "Retry-After": "86400" } : undefined,
+        },
+      );
     }
 
     const call = await placeVendorSquadCall({
