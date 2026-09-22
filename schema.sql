@@ -1,4 +1,6 @@
 create extension if not exists "uuid-ossp";
+-- Required for organization telephony secret helpers below.
+create extension if not exists supabase_vault cascade;
 
 create type public.task_status as enum (
   'pending',

@@ -2,12 +2,13 @@
  * Apply schema.sql to the linked Supabase project.
  *
  * Preferred: SUPABASE_ACCESS_TOKEN + SUPABASE_PROJECT_REF (Management API migration).
- * Alternative: DATABASE_URL (direct Postgres; requires `pg`).
+ * Alternative: DATABASE_URL (direct Postgres via dynamic `pg` import).
  *
  * Usage:
  *   npm run db:apply-schema
  */
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { loadWorkspaceEnv } from "./load-workspace-env";
 
 loadWorkspaceEnv();
@@ -45,15 +46,26 @@ async function applyViaManagementApi(sql: string) {
 
 async function applyViaDatabaseUrl(sql: string) {
   const databaseUrl = required("DATABASE_URL");
-  let Client: typeof import("pg").Client;
+  const require = createRequire(import.meta.url);
+  let Client: new (config: {
+    connectionString: string;
+    ssl?: { rejectUnauthorized: boolean };
+  }) => {
+    connect: () => Promise<void>;
+    query: (text: string) => Promise<unknown>;
+    end: () => Promise<void>;
+  };
   try {
-    ({ Client } = await import("pg"));
+    ({ Client } = require("pg") as { Client: typeof Client });
   } catch {
     throw new Error(
       "DATABASE_URL is set but the `pg` package is not installed. Run `npm install pg` or use SUPABASE_ACCESS_TOKEN + SUPABASE_PROJECT_REF instead.",
     );
   }
-  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+  const client = new Client({
+    connectionString: databaseUrl,
+    ssl: { rejectUnauthorized: false },
+  });
   await client.connect();
   try {
     await client.query(sql);
