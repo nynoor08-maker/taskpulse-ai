@@ -139,7 +139,10 @@ export async function POST(request: Request) {
           quantity: 1,
         },
       ],
-      metadata: { taskId: task.id },
+      metadata: {
+        taskId: task.id,
+        expectedAmountCents: String(Math.round(agreedPrice * 100)),
+      },
       success_url: `${getAppUrl()}/dashboard?payment=success&taskId=${encodeURIComponent(task.id)}`,
       cancel_url: `${getAppUrl()}/dashboard?payment=cancelled`,
     });

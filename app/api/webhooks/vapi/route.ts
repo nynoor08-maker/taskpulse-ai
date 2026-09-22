@@ -5,7 +5,7 @@ import { getAppUrl } from "@/lib/app-url";
 import { dispatchFallback } from "@/lib/fallback-dispatcher";
 import { dispatchWebhookEvent } from "@/lib/events/webhook-dispatcher";
 import { analyzeCallLog } from "@/lib/conversation-analytics";
-import { captureException, enforceRateLimit } from "@/lib/security";
+import { captureException, enforceWebhookRateLimit } from "@/lib/security";
 import { sendTaskSMS } from "@/lib/twilio";
 import { findNextVendor } from "@/lib/vendor-pool";
 import { placeVendorSquadCall } from "@/lib/vapi/dispatch";
@@ -162,7 +162,7 @@ async function tryDispatchNextVendor(
 }
 
 export async function POST(request: Request) {
-  const rateLimitResponse = await enforceRateLimit(request);
+  const rateLimitResponse = await enforceWebhookRateLimit(request);
   if (rateLimitResponse) return rateLimitResponse;
 
   const webhookSecret = process.env.VAPI_WEBHOOK_SECRET;

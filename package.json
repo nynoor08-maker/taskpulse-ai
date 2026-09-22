@@ -18,7 +18,6 @@
   "dependencies": {
     "@base-ui/react": "^1.8.0",
     "@sentry/nextjs": "^10.74.0",
-    "@stripe/stripe-js": "^7.10.0",
     "@supabase/ssr": "^0.12.6",
     "@supabase/supabase-js": "^2.116.0",
     "@upstash/ratelimit": "^2.0.8",
@@ -47,5 +46,8 @@
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
     "typescript": "^5"
+  },
+  "optionalDependencies": {
+    "pg": "^8.23.0"
   }
 }

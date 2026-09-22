@@ -13,14 +13,18 @@ function isProductionRuntime() {
   );
 }
 
-const rateLimit =
-  redisUrl && redisToken
-    ? new Ratelimit({
-        redis: new Redis({ url: redisUrl, token: redisToken }),
-        limiter: Ratelimit.slidingWindow(30, "1 m"),
-        prefix: "taskpulse:api",
-      })
-    : null;
+function createLimiter(requests: number, window: `${number} ${"s" | "m" | "h" | "d"}`, prefix: string) {
+  if (!redisUrl || !redisToken) return null;
+  return new Ratelimit({
+    redis: new Redis({ url: redisUrl, token: redisToken }),
+    limiter: Ratelimit.slidingWindow(requests, window),
+    prefix,
+  });
+}
+
+const apiRateLimit = createLimiter(30, "1 m", "taskpulse:api");
+/** Signed provider callbacks can burst; keep them off the public API bucket. */
+const webhookRateLimit = createLimiter(300, "1 m", "taskpulse:webhooks");
 
 export function clientIdentifier(request: Request) {
   const authorization = request.headers.get("authorization");
@@ -32,7 +36,10 @@ export function clientIdentifier(request: Request) {
   return `ip:${forwardedFor?.split(",")[0]?.trim() ?? "unknown"}`;
 }
 
-export async function enforceRateLimit(request: Request) {
+async function limitWith(
+  rateLimit: Ratelimit | null,
+  request: Request,
+) {
   if (!rateLimit) {
     if (isProductionRuntime()) {
       return new Response(
@@ -56,6 +63,14 @@ export async function enforceRateLimit(request: Request) {
       },
     },
   );
+}
+
+export async function enforceRateLimit(request: Request) {
+  return limitWith(apiRateLimit, request);
+}
+
+export async function enforceWebhookRateLimit(request: Request) {
+  return limitWith(webhookRateLimit, request);
 }
 
 export function captureException(error: unknown, context: Record<string, unknown>) {

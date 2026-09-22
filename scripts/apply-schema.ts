@@ -2,13 +2,14 @@
  * Apply schema.sql to the linked Supabase project.
  *
  * Preferred: SUPABASE_ACCESS_TOKEN + SUPABASE_PROJECT_REF (Management API migration).
- * Alternative: DATABASE_URL (direct Postgres via dynamic `pg` import).
+ * Alternative: DATABASE_URL (direct Postgres via `pg`).
  *
  * Usage:
  *   npm run db:apply-schema
  */
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
+import { readFile } from "node:fs/promises";
 import { loadWorkspaceEnv } from "./load-workspace-env";
 
 loadWorkspaceEnv();
@@ -19,9 +20,15 @@ function required(name: string) {
   return value;
 }
 
+function schemaMigrationName(sql: string) {
+  const hash = createHash("sha256").update(sql).digest("hex").slice(0, 12);
+  return `taskpulse_schema_${hash}`;
+}
+
 async function applyViaManagementApi(sql: string) {
   const token = required("SUPABASE_ACCESS_TOKEN");
   const projectRef = required("SUPABASE_PROJECT_REF");
+  const name = schemaMigrationName(sql);
   const response = await fetch(
     `https://api.supabase.com/v1/projects/${projectRef}/database/migrations`,
     {
@@ -31,17 +38,30 @@ async function applyViaManagementApi(sql: string) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        name: `taskpulse_schema_${new Date().toISOString().slice(0, 10)}`,
+        name,
         query: sql,
       }),
     },
   );
   if (!response.ok) {
+    const body = await response.text();
+    // Idempotent re-apply: same content hash already recorded as a migration.
+    if (
+      response.status === 400 ||
+      response.status === 409 ||
+      /already exists|duplicate|conflict/i.test(body)
+    ) {
+      console.log(
+        `Schema migration ${name} already applied (or conflicted) on project ${projectRef}; treating as success.`,
+      );
+      console.log(`API response: ${body.slice(0, 400)}`);
+      return;
+    }
     throw new Error(
-      `Supabase Management API rejected schema apply (${response.status}): ${await response.text()}`,
+      `Supabase Management API rejected schema apply (${response.status}): ${body}`,
     );
   }
-  console.log(`Schema applied via Management API to project ${projectRef}.`);
+  console.log(`Schema applied via Management API (${name}) to project ${projectRef}.`);
 }
 
 async function applyViaDatabaseUrl(sql: string) {

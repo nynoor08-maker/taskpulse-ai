@@ -35,16 +35,23 @@ const shortAllowedKeys = new Set([
 const requiredRlsTables = [
   "organizations",
   "organization_members",
+  "organization_telephony_settings",
   "profiles",
   "tasks",
   "vendors",
+  "vendor_slots",
   "call_logs",
+  "tool_call_logs",
+  "call_monitor_credentials",
+  "call_interventions",
   "prompt_variants",
   "call_analytics",
   "webhook_subscriptions",
   "api_keys",
   "app_settings",
   "idempotency_keys",
+  "chats",
+  "chat_messages",
 ] as const;
 
 function isSecureValue(name: string, value: string) {
@@ -65,8 +72,12 @@ async function main() {
       failures.push(`${name} is missing or appears to be a placeholder.`);
     }
   }
-  if (process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_APP_URL.startsWith("https://")) {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (appUrl && !appUrl.startsWith("https://")) {
     failures.push("NEXT_PUBLIC_APP_URL must use HTTPS.");
+  }
+  if (appUrl && /(YOUR_DOMAIN|example\.com|localhost)/i.test(appUrl)) {
+    failures.push("NEXT_PUBLIC_APP_URL still looks like a template placeholder.");
   }
 
   const [
@@ -78,6 +89,7 @@ async function main() {
     dispatchCall,
     dispatchSquad,
     v1Tasks,
+    security,
   ] = await Promise.all([
     readFile("app/api/webhooks/vapi/route.ts", "utf8"),
     readFile("app/api/webhooks/stripe/route.ts", "utf8"),
@@ -87,6 +99,7 @@ async function main() {
     readFile("app/api/dispatch-call/route.ts", "utf8"),
     readFile("app/api/dispatch-squad/route.ts", "utf8"),
     readFile("app/api/v1/tasks/route.ts", "utf8"),
+    readFile("lib/security.ts", "utf8"),
   ]);
 
   if (!vapiWebhook.includes("isAuthorized(request, webhookSecret)")) {
@@ -94,6 +107,9 @@ async function main() {
   }
   if (!stripeWebhook.includes("stripe.webhooks.constructEvent")) {
     failures.push("Stripe webhook signature enforcement is missing.");
+  }
+  if (!stripeWebhook.includes("amount_total") || !stripeWebhook.includes("agreed_price")) {
+    failures.push("Stripe webhook must verify paid amount against the agreed quote.");
   }
   if (!twilioWebhook.includes("twilio.validateRequest")) {
     failures.push("Twilio webhook signature enforcement is missing.");
@@ -112,6 +128,9 @@ async function main() {
   }
   if (!v1Tasks.includes("placeVendorSquadCall")) {
     failures.push("API task create must dispatch via placeVendorSquadCall (squad).");
+  }
+  if (!security.includes("enforceWebhookRateLimit")) {
+    failures.push("Signed webhooks must use a dedicated webhook rate-limit bucket.");
   }
   if (process.env.ALLOW_SINGLE_ASSISTANT_DISPATCH === "true") {
     failures.push(

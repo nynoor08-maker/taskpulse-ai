@@ -17,9 +17,12 @@ export async function proxy(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const response = NextResponse.next({ request });
-  const protectedRoutePrefix = request.nextUrl.pathname.startsWith("/dashboard") ||
-    request.nextUrl.pathname.startsWith("/vendor") ||
-    request.nextUrl.pathname.startsWith("/admin");
+  const pathname = request.nextUrl.pathname;
+  const protectedRoutePrefix =
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/vendor") ||
+    pathname.startsWith("/admin") ||
+    /^\/[^/]+\/(analytics|calls|settings)(\/|$)/.test(pathname);
 
   // Fail closed: if Supabase isn't configured we cannot verify sessions, so
   // protected routes must not be served rather than silently allowing access.

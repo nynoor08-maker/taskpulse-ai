@@ -2,31 +2,44 @@ create extension if not exists "uuid-ossp";
 -- Required for organization telephony secret helpers below.
 create extension if not exists supabase_vault cascade;
 
-create type public.task_status as enum (
+do $$ begin
+  create type public.task_status as enum (
   'pending',
   'in_progress',
   'completed',
   'failed'
 );
+exception when duplicate_object then null;
+end $$;
 
-create type public.payment_status as enum (
+do $$ begin
+  create type public.payment_status as enum (
   'unpaid',
   'paid'
 );
+exception when duplicate_object then null;
+end $$;
 
-create type public.organization_role as enum (
+do $$ begin
+  create type public.organization_role as enum (
   'owner',
   'admin',
   'member'
 );
+exception when duplicate_object then null;
+end $$;
 
-create type public.profile_role as enum (
+do $$ begin
+  create type public.profile_role as enum (
   'customer',
   'vendor',
   'admin'
 );
+exception when duplicate_object then null;
+end $$;
 
-create type public.task_category as enum (
+do $$ begin
+  create type public.task_category as enum (
   'plumbing',
   'hvac',
   'electrical',
@@ -35,14 +48,19 @@ create type public.task_category as enum (
   'cleaning',
   'general_handyman'
 );
+exception when duplicate_object then null;
+end $$;
 
-create type public.task_urgency as enum (
+do $$ begin
+  create type public.task_urgency as enum (
   'emergency_immediate',
   'same_day',
   'scheduled_week'
 );
+exception when duplicate_object then null;
+end $$;
 
-create table public.profiles (
+create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
   full_name text,
@@ -52,11 +70,11 @@ create table public.profiles (
   created_at timestamptz not null default now()
 );
 
-create unique index profiles_phone_number_unique_idx
+create unique index if not exists profiles_phone_number_unique_idx
   on public.profiles (phone_number)
   where phone_number is not null;
 
-create table public.organizations (
+create table if not exists public.organizations (
   id uuid primary key default uuid_generate_v4(),
   name text not null,
   slug text not null unique check (slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'),
@@ -68,7 +86,7 @@ create table public.organizations (
   created_at timestamptz not null default now()
 );
 
-create table public.organization_members (
+create table if not exists public.organization_members (
   id uuid primary key default uuid_generate_v4(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -77,7 +95,7 @@ create table public.organization_members (
   unique (organization_id, user_id)
 );
 
-create table public.organization_telephony_settings (
+create table if not exists public.organization_telephony_settings (
   organization_id uuid primary key references public.organizations(id) on delete cascade,
   vapi_api_key_secret_id uuid not null,
   vapi_phone_number_id_secret_id uuid not null,
@@ -85,7 +103,7 @@ create table public.organization_telephony_settings (
   updated_at timestamptz not null default now()
 );
 
-create table public.api_keys (
+create table if not exists public.api_keys (
   id uuid primary key default uuid_generate_v4(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
   created_by_user_id uuid not null references public.profiles(id) on delete restrict,
@@ -95,7 +113,7 @@ create table public.api_keys (
   last_used_at timestamptz
 );
 
-create table public.webhook_subscriptions (
+create table if not exists public.webhook_subscriptions (
   id uuid primary key default uuid_generate_v4(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
   target_url text not null check (target_url ~ '^https://'),
@@ -105,7 +123,7 @@ create table public.webhook_subscriptions (
   created_at timestamptz not null default now()
 );
 
-create table public.webhook_logs (
+create table if not exists public.webhook_logs (
   id uuid primary key default uuid_generate_v4(),
   subscription_id uuid not null references public.webhook_subscriptions(id) on delete cascade,
   event_type text not null,
@@ -114,7 +132,7 @@ create table public.webhook_logs (
   created_at timestamptz not null default now()
 );
 
-create table public.prompt_variants (
+create table if not exists public.prompt_variants (
   id uuid primary key default uuid_generate_v4(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
   name text not null,
@@ -124,22 +142,23 @@ create table public.prompt_variants (
   created_at timestamptz not null default now()
 );
 
-create table public.app_settings (
+create table if not exists public.app_settings (
   key text primary key check (key = 'dispatch'),
   dispatch_paused boolean not null default false,
   updated_at timestamptz not null default now()
 );
 
 insert into public.app_settings (key, dispatch_paused)
-values ('dispatch', false);
+values ('dispatch', false)
+on conflict (key) do nothing;
 
-create table public.idempotency_keys (
+create table if not exists public.idempotency_keys (
   key text primary key,
   source text not null,
   created_at timestamptz not null default now()
 );
 
-create table public.tasks (
+create table if not exists public.tasks (
   id uuid primary key default uuid_generate_v4(),
   organization_id uuid references public.organizations(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -159,7 +178,7 @@ create table public.tasks (
   created_at timestamptz not null default now()
 );
 
-create table public.call_logs (
+create table if not exists public.call_logs (
   id uuid primary key default uuid_generate_v4(),
   organization_id uuid references public.organizations(id) on delete cascade,
   task_id uuid not null references public.tasks(id) on delete cascade,
@@ -176,7 +195,7 @@ create table public.call_logs (
   created_at timestamptz not null default now()
 );
 
-create table public.tool_call_logs (
+create table if not exists public.tool_call_logs (
   id uuid primary key default uuid_generate_v4(),
   call_log_id uuid not null references public.call_logs(id) on delete cascade,
   tool_call_id text not null unique,
@@ -185,13 +204,13 @@ create table public.tool_call_logs (
   created_at timestamptz not null default now()
 );
 
-create table public.call_monitor_credentials (
+create table if not exists public.call_monitor_credentials (
   call_log_id uuid primary key references public.call_logs(id) on delete cascade,
   vapi_control_url text not null,
   vapi_listen_url text
 );
 
-create table public.call_interventions (
+create table if not exists public.call_interventions (
   id uuid primary key default uuid_generate_v4(),
   call_log_id uuid not null references public.call_logs(id) on delete cascade,
   organization_id uuid not null references public.organizations(id) on delete cascade,
@@ -201,7 +220,7 @@ create table public.call_interventions (
   created_at timestamptz not null default now()
 );
 
-create table public.call_analytics (
+create table if not exists public.call_analytics (
   id uuid primary key default uuid_generate_v4(),
   call_log_id uuid not null unique references public.call_logs(id) on delete cascade,
   vendor_sentiment text not null check (vendor_sentiment in ('positive', 'neutral', 'aggressive', 'resistant')),
@@ -211,7 +230,7 @@ create table public.call_analytics (
   created_at timestamptz not null default now()
 );
 
-create table public.vendors (
+create table if not exists public.vendors (
   id uuid primary key default uuid_generate_v4(),
   organization_id uuid references public.organizations(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -227,7 +246,7 @@ create table public.vendors (
   created_at timestamptz not null default now()
 );
 
-create table public.vendor_slots (
+create table if not exists public.vendor_slots (
   id uuid primary key default uuid_generate_v4(),
   vendor_id uuid not null references public.vendors(id) on delete cascade,
   requested_date date not null,
@@ -238,45 +257,48 @@ create table public.vendor_slots (
   unique (vendor_id, requested_date, start_time, end_time)
 );
 
-create index vendor_slots_vendor_id_requested_date_idx
+create index if not exists vendor_slots_vendor_id_requested_date_idx
   on public.vendor_slots (vendor_id, requested_date, start_time);
 
-create index vendors_category_accepting_idx
+create index if not exists vendors_category_accepting_idx
   on public.vendors (category)
   where is_accepting_jobs;
 
-create index tasks_organization_id_created_at_idx
+create index if not exists tasks_organization_id_created_at_idx
   on public.tasks (organization_id, created_at desc);
 
-create index call_logs_organization_id_created_at_idx
+create index if not exists call_logs_organization_id_created_at_idx
   on public.call_logs (organization_id, created_at desc);
 
-create index tool_call_logs_call_log_id_created_at_idx
+create index if not exists tool_call_logs_call_log_id_created_at_idx
   on public.tool_call_logs (call_log_id, created_at desc);
 
-create index call_interventions_call_log_id_created_at_idx
+create index if not exists call_interventions_call_log_id_created_at_idx
   on public.call_interventions (call_log_id, created_at desc);
 
-create index prompt_variants_organization_id_idx
+create index if not exists prompt_variants_organization_id_idx
   on public.prompt_variants (organization_id, is_active);
 
-create index api_keys_organization_id_idx
+create index if not exists api_keys_organization_id_idx
   on public.api_keys (organization_id);
 
-create index webhook_subscriptions_organization_events_idx
+create index if not exists webhook_subscriptions_organization_events_idx
   on public.webhook_subscriptions (organization_id)
   where is_active;
 
-create index webhook_logs_subscription_id_created_at_idx
+create index if not exists webhook_logs_subscription_id_created_at_idx
   on public.webhook_logs (subscription_id, created_at desc);
 
-create type public.chat_message_role as enum (
+do $$ begin
+  create type public.chat_message_role as enum (
   'user',
   'assistant',
   'system'
 );
+exception when duplicate_object then null;
+end $$;
 
-create table public.chats (
+create table if not exists public.chats (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid not null references public.profiles(id) on delete cascade,
   title text not null default 'New chat',
@@ -284,7 +306,7 @@ create table public.chats (
   updated_at timestamptz not null default now()
 );
 
-create table public.chat_messages (
+create table if not exists public.chat_messages (
   id uuid primary key default uuid_generate_v4(),
   chat_id uuid not null references public.chats(id) on delete cascade,
   role public.chat_message_role not null,
@@ -292,10 +314,10 @@ create table public.chat_messages (
   created_at timestamptz not null default now()
 );
 
-create index chats_user_id_updated_at_idx
+create index if not exists chats_user_id_updated_at_idx
   on public.chats (user_id, updated_at desc);
 
-create index chat_messages_chat_id_created_at_idx
+create index if not exists chat_messages_chat_id_created_at_idx
   on public.chat_messages (chat_id, created_at asc);
 
 create or replace function public.set_chat_updated_at()
@@ -308,6 +330,7 @@ begin
 end;
 $$;
 
+drop trigger if exists chats_set_updated_at on public.chats;
 create trigger chats_set_updated_at
   before update on public.chats
   for each row
@@ -345,9 +368,11 @@ as $$
   from pg_tables
   where schemaname = 'public'
     and tablename in (
-      'organizations', 'organization_members', 'profiles', 'tasks', 'vendors', 'call_logs',
+      'organizations', 'organization_members', 'organization_telephony_settings',
+      'profiles', 'tasks', 'vendors', 'vendor_slots', 'call_logs',
+      'tool_call_logs', 'call_monitor_credentials', 'call_interventions',
       'prompt_variants', 'call_analytics', 'webhook_subscriptions', 'api_keys',
-      'app_settings', 'idempotency_keys'
+      'app_settings', 'idempotency_keys', 'chats', 'chat_messages'
     )
   order by tablename;
 $$;
@@ -399,17 +424,20 @@ as $$
   );
 $$;
 
+drop policy if exists "Anyone can view organization branding" on public.organizations;
 create policy "Anyone can view organization branding"
   on public.organizations
   for select
   using (true);
 
+drop policy if exists "Users can view their own profile" on public.profiles;
 create policy "Users can view their own profile"
   on public.profiles
   for select
   to authenticated
   using ((select auth.uid()) = id);
 
+drop policy if exists "Users can insert their own profile" on public.profiles;
 create policy "Users can insert their own profile"
   on public.profiles
   for insert
@@ -420,6 +448,7 @@ create policy "Users can insert their own profile"
     and is_admin = false
   );
 
+drop policy if exists "Users can update their own profile" on public.profiles;
 create policy "Users can update their own profile"
   on public.profiles
   for update
@@ -461,12 +490,14 @@ update public.profiles
 set role = 'admin'
 where is_admin = true;
 
+drop policy if exists "Members can view their organization memberships" on public.organization_members;
 create policy "Members can view their organization memberships"
   on public.organization_members
   for select
   to authenticated
   using ((select auth.uid()) = user_id);
 
+drop policy if exists "Organization managers can manage memberships" on public.organization_members;
 create policy "Organization managers can manage memberships"
   on public.organization_members
   for all
@@ -474,18 +505,21 @@ create policy "Organization managers can manage memberships"
   using ((select public.can_manage_organization(organization_id)))
   with check ((select public.can_manage_organization(organization_id)));
 
+drop policy if exists "Organization managers can view telephony settings" on public.organization_telephony_settings;
 create policy "Organization managers can view telephony settings"
   on public.organization_telephony_settings
   for select
   to authenticated
   using ((select public.can_manage_organization(organization_id)));
 
+drop policy if exists "Organization managers can view API keys" on public.api_keys;
 create policy "Organization managers can view API keys"
   on public.api_keys
   for select
   to authenticated
   using ((select public.can_manage_organization(organization_id)));
 
+drop policy if exists "Organization managers can manage prompt variants" on public.prompt_variants;
 create policy "Organization managers can manage prompt variants"
   on public.prompt_variants
   for all
@@ -493,6 +527,7 @@ create policy "Organization managers can manage prompt variants"
   using ((select public.can_manage_organization(organization_id)))
   with check ((select public.can_manage_organization(organization_id)));
 
+drop policy if exists "Organization members can view call analytics" on public.call_analytics;
 create policy "Organization members can view call analytics"
   on public.call_analytics
   for select
@@ -505,18 +540,21 @@ create policy "Organization members can view call analytics"
     )
   );
 
+drop policy if exists "Organization managers can view call interventions" on public.call_interventions;
 create policy "Organization managers can view call interventions"
   on public.call_interventions
   for select
   to authenticated
   using ((select public.can_manage_organization(organization_id)));
 
+drop policy if exists "Organization managers can revoke API keys" on public.api_keys;
 create policy "Organization managers can revoke API keys"
   on public.api_keys
   for delete
   to authenticated
   using ((select public.can_manage_organization(organization_id)));
 
+drop policy if exists "Organization managers can manage webhook subscriptions" on public.webhook_subscriptions;
 create policy "Organization managers can manage webhook subscriptions"
   on public.webhook_subscriptions
   for all
@@ -524,6 +562,7 @@ create policy "Organization managers can manage webhook subscriptions"
   using ((select public.can_manage_organization(organization_id)))
   with check ((select public.can_manage_organization(organization_id)));
 
+drop policy if exists "Organization managers can view webhook logs" on public.webhook_logs;
 create policy "Organization managers can view webhook logs"
   on public.webhook_logs
   for select
@@ -537,30 +576,35 @@ create policy "Organization managers can view webhook logs"
     )
   );
 
+drop policy if exists "Organization members can view organization tasks" on public.tasks;
 create policy "Organization members can view organization tasks"
   on public.tasks
   for select
   to authenticated
   using ((select public.is_organization_member(organization_id)));
 
+drop policy if exists "Organization members can create organization tasks" on public.tasks;
 create policy "Organization members can create organization tasks"
   on public.tasks
   for insert
   to authenticated
   with check ((select public.is_organization_member(organization_id)));
 
+drop policy if exists "Organization members can view organization call logs" on public.call_logs;
 create policy "Organization members can view organization call logs"
   on public.call_logs
   for select
   to authenticated
   using ((select public.is_organization_member(organization_id)));
 
+drop policy if exists "Organization members can view organization vendors" on public.vendors;
 create policy "Organization members can view organization vendors"
   on public.vendors
   for select
   to authenticated
   using ((select public.is_organization_member(organization_id)));
 
+drop policy if exists "Organization managers can manage organization vendors" on public.vendors;
 create policy "Organization managers can manage organization vendors"
   on public.vendors
   for all
@@ -628,6 +672,9 @@ begin
 end;
 $$;
 
+revoke all on function public.update_organization_telephony(uuid, text, text, text) from public;
+grant execute on function public.update_organization_telephony(uuid, text, text, text) to authenticated;
+
 create or replace function public.get_organization_telephony(
   p_organization_id uuid
 )
@@ -657,12 +704,14 @@ $$;
 revoke all on function public.get_organization_telephony(uuid) from public;
 grant execute on function public.get_organization_telephony(uuid) to service_role;
 
+drop policy if exists "Admins can view application settings" on public.app_settings;
 create policy "Admins can view application settings"
   on public.app_settings
   for select
   to authenticated
   using ((select public.is_admin()));
 
+drop policy if exists "Admins can update application settings" on public.app_settings;
 create policy "Admins can update application settings"
   on public.app_settings
   for update
@@ -670,12 +719,14 @@ create policy "Admins can update application settings"
   using ((select public.is_admin()))
   with check ((select public.is_admin()));
 
+drop policy if exists "Users can view their own tasks" on public.tasks;
 create policy "Users can view their own tasks"
   on public.tasks
   for select
   to authenticated
   using ((select auth.uid()) = user_id);
 
+drop policy if exists "Users can insert their own tasks" on public.tasks;
 create policy "Users can insert their own tasks"
   on public.tasks
   for insert
@@ -688,6 +739,7 @@ create policy "Users can insert their own tasks"
     )
   );
 
+drop policy if exists "Users can view their own call logs" on public.call_logs;
 create policy "Users can view their own call logs"
   on public.call_logs
   for select
@@ -701,6 +753,7 @@ create policy "Users can view their own call logs"
     )
   );
 
+drop policy if exists "Users can view their own tool call logs" on public.tool_call_logs;
 create policy "Users can view their own tool call logs"
   on public.tool_call_logs
   for select
@@ -715,24 +768,28 @@ create policy "Users can view their own tool call logs"
     )
   );
 
+drop policy if exists "Admins can view all tasks" on public.tasks;
 create policy "Admins can view all tasks"
   on public.tasks
   for select
   to authenticated
   using ((select public.is_admin()));
 
+drop policy if exists "Admins can view all call logs" on public.call_logs;
 create policy "Admins can view all call logs"
   on public.call_logs
   for select
   to authenticated
   using ((select public.is_admin()));
 
+drop policy if exists "Users can view their own vendors" on public.vendors;
 create policy "Users can view their own vendors"
   on public.vendors
   for select
   to authenticated
   using ((select auth.uid()) = user_id);
 
+drop policy if exists "Users can manage their own vendors" on public.vendors;
 create policy "Users can manage their own vendors"
   on public.vendors
   for all
@@ -740,6 +797,7 @@ create policy "Users can manage their own vendors"
   using ((select auth.uid()) = user_id)
   with check ((select auth.uid()) = user_id);
 
+drop policy if exists "Users can view slots for their own vendors" on public.vendor_slots;
 create policy "Users can view slots for their own vendors"
   on public.vendor_slots
   for select
@@ -753,6 +811,7 @@ create policy "Users can view slots for their own vendors"
     )
   );
 
+drop policy if exists "Users can manage slots for their own vendors" on public.vendor_slots;
 create policy "Users can manage slots for their own vendors"
   on public.vendor_slots
   for all
@@ -774,18 +833,21 @@ create policy "Users can manage slots for their own vendors"
     )
   );
 
+drop policy if exists "Users can view their own chats" on public.chats;
 create policy "Users can view their own chats"
   on public.chats
   for select
   to authenticated
   using ((select auth.uid()) = user_id);
 
+drop policy if exists "Users can create their own chats" on public.chats;
 create policy "Users can create their own chats"
   on public.chats
   for insert
   to authenticated
   with check ((select auth.uid()) = user_id);
 
+drop policy if exists "Users can update their own chats" on public.chats;
 create policy "Users can update their own chats"
   on public.chats
   for update
@@ -793,12 +855,14 @@ create policy "Users can update their own chats"
   using ((select auth.uid()) = user_id)
   with check ((select auth.uid()) = user_id);
 
+drop policy if exists "Users can delete their own chats" on public.chats;
 create policy "Users can delete their own chats"
   on public.chats
   for delete
   to authenticated
   using ((select auth.uid()) = user_id);
 
+drop policy if exists "Users can view messages in their own chats" on public.chat_messages;
 create policy "Users can view messages in their own chats"
   on public.chat_messages
   for select
@@ -812,6 +876,7 @@ create policy "Users can view messages in their own chats"
     )
   );
 
+drop policy if exists "Users can create messages in their own chats" on public.chat_messages;
 create policy "Users can create messages in their own chats"
   on public.chat_messages
   for insert

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/server";
-import { captureException, enforceRateLimit } from "@/lib/security";
+import { captureException, enforceWebhookRateLimit } from "@/lib/security";
 import { sendTaskSMS } from "@/lib/twilio";
 
 type JsonRecord = Record<string, unknown>;
@@ -196,7 +196,7 @@ async function confirmBooking(
 }
 
 export async function POST(request: Request) {
-  const rateLimitResponse = await enforceRateLimit(request);
+  const rateLimitResponse = await enforceWebhookRateLimit(request);
   if (rateLimitResponse) return rateLimitResponse;
 
   const webhookSecret = process.env.VAPI_WEBHOOK_SECRET;
