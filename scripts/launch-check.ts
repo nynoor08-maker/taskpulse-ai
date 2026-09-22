@@ -1,5 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
+import { loadWorkspaceEnv } from "./load-workspace-env";
+
+loadWorkspaceEnv();
 
 const requiredEnvironment = [
   "NEXT_PUBLIC_SUPABASE_URL",
@@ -23,6 +26,12 @@ const requiredEnvironment = [
   "NEXT_PUBLIC_APP_URL",
 ] as const;
 
+const shortAllowedKeys = new Set([
+  "TWILIO_PHONE_NUMBER",
+  "RESEND_FROM_EMAIL",
+  "VAPI_PHONE_NUMBER_ID",
+]);
+
 const requiredRlsTables = [
   "organizations",
   "organization_members",
@@ -38,15 +47,21 @@ const requiredRlsTables = [
   "idempotency_keys",
 ] as const;
 
-function isSecureValue(value: string) {
-  return value.length >= 16 && !/(changeme|placeholder|example|your[_-]?|^test$)/i.test(value);
+function isSecureValue(name: string, value: string) {
+  if (/(changeme|placeholder|example|your[_-]?|^test$)/i.test(value)) return false;
+  if (shortAllowedKeys.has(name)) {
+    if (name === "TWILIO_PHONE_NUMBER") return /^\+[1-9]\d{1,14}$/.test(value);
+    if (name === "RESEND_FROM_EMAIL") return value.includes("@") && value.length >= 5;
+    return value.length >= 8;
+  }
+  return value.length >= 16;
 }
 
 async function main() {
   const failures: string[] = [];
   for (const name of requiredEnvironment) {
     const value = process.env[name];
-    if (!value || !isSecureValue(value)) {
+    if (!value || !isSecureValue(name, value)) {
       failures.push(`${name} is missing or appears to be a placeholder.`);
     }
   }
@@ -106,11 +121,18 @@ async function main() {
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (url && serviceKey && isSecureValue(url) && isSecureValue(serviceKey)) {
+  if (
+    url &&
+    serviceKey &&
+    isSecureValue("NEXT_PUBLIC_SUPABASE_URL", url) &&
+    isSecureValue("SUPABASE_SERVICE_ROLE_KEY", serviceKey)
+  ) {
     const supabase = createClient(url, serviceKey, { auth: { persistSession: false } });
     const { data, error } = await supabase.rpc("launch_readiness_rls_status");
     if (error) {
-      failures.push(`Unable to verify RLS: ${error.message}. Apply the current schema.sql before launch.`);
+      failures.push(
+        `Unable to verify RLS: ${error.message}. Run npm run db:apply-schema before launch.`,
+      );
     } else {
       const enabled = new Map(
         (data as { table_name: string; rls_enabled: boolean }[]).map((row) => [
@@ -126,6 +148,9 @@ async function main() {
 
   if (failures.length) {
     console.error("Launch readiness failed:\n- " + failures.join("\n- "));
+    console.error(
+      "\nTip: copy .env.local.example → .env.local, fill secrets, then:\n  npm run db:apply-schema\n  npm run check:launch\nOr run both: npm run setup:launch",
+    );
     process.exitCode = 1;
     return;
   }

@@ -12,6 +12,9 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { applyVendorQuote } from "../lib/vendor-quote";
 import { pickAgreedPrice } from "../lib/pick-agreed-price";
 import { placeVendorSquadCall } from "../lib/vapi/dispatch";
+import { loadWorkspaceEnv } from "./load-workspace-env";
+
+loadWorkspaceEnv();
 
 function required(name: string) {
   const value = process.env[name];

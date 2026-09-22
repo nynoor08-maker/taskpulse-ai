@@ -23,10 +23,14 @@ npm run dev
 ## Launch checklist
 
 ```bash
-npm run check:launch   # env, webhooks, squad markers, RLS, Upstash, Sentry
+cp .env.local.example .env.local   # fill real secrets
+npm run db:apply-schema            # needs SUPABASE_ACCESS_TOKEN+SUPABASE_PROJECT_REF or DATABASE_URL
+npm run check:launch               # env, webhooks, squad markers, RLS, Upstash, Sentry
+# or both:
+npm run setup:launch
+
 npm run build
-npm run test:smoke     # code markers; set SMOKE_E2E_ALLOW=true for DB fixture flow
-npm run test:agent-eval
+npm run test:smoke                 # code markers; set SMOKE_E2E_ALLOW=true for DB fixture flow
 ```
 
 Live call / load scripts require explicit opt-in flags — see `.env.local.example`.

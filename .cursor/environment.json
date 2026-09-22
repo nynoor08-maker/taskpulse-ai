@@ -1,0 +1,10 @@
+{
+  "name": "TaskPulse AI",
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "Next.js",
+      "command": "npm run dev -- --port 3000"
+    }
+  ]
+}
