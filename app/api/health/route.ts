@@ -5,6 +5,8 @@ import { createServiceClient } from "@/server";
 
 type ServiceStatus = "ok" | "failed" | "not_configured";
 
+const isProduction = process.env.NODE_ENV === "production";
+
 async function probeSupabase(): Promise<ServiceStatus> {
   try {
     const supabase = await createServiceClient();
@@ -55,9 +57,39 @@ async function probeTwilio(): Promise<ServiceStatus> {
 
 async function probeVapi(): Promise<ServiceStatus> {
   const apiKey = process.env.VAPI_API_KEY;
+  const phoneNumberId = process.env.VAPI_PHONE_NUMBER_ID;
+  if (!apiKey || !phoneNumberId) return "failed";
+  try {
+    const response = await fetch(`https://api.vapi.ai/phone-number/${encodeURIComponent(phoneNumberId)}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(5_000),
+    });
+    return response.ok ? "ok" : "failed";
+  } catch {
+    return "failed";
+  }
+}
+
+async function probeResend(): Promise<ServiceStatus> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const fromEmail = process.env.RESEND_FROM_EMAIL;
+  if (!apiKey || !fromEmail) return "failed";
+  try {
+    const response = await fetch("https://api.resend.com/domains", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(5_000),
+    });
+    return response.ok ? "ok" : "failed";
+  } catch {
+    return "failed";
+  }
+}
+
+async function probeOpenAI(): Promise<ServiceStatus> {
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return "failed";
   try {
-    const response = await fetch("https://api.vapi.ai/assistant?limit=1", {
+    const response = await fetch("https://api.openai.com/v1/models", {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(5_000),
     });
@@ -68,13 +100,33 @@ async function probeVapi(): Promise<ServiceStatus> {
 }
 
 export async function GET() {
-  const [database, redis, stripe, twilioStatus, vapi] = await Promise.all([
-    probeSupabase(), probeRedis(), probeStripe(), probeTwilio(), probeVapi(),
+  const [database, redis, stripe, twilioStatus, vapi, resend, openai] = await Promise.all([
+    probeSupabase(),
+    probeRedis(),
+    probeStripe(),
+    probeTwilio(),
+    probeVapi(),
+    probeResend(),
+    probeOpenAI(),
   ]);
-  const healthy = [database, stripe, twilioStatus, vapi].every((status) => status === "ok") &&
-    (redis === "ok" || redis === "not_configured");
+
+  const coreOk = [database, stripe, twilioStatus, vapi, resend, openai].every(
+    (status) => status === "ok",
+  );
+  const redisOk = isProduction ? redis === "ok" : redis === "ok" || redis === "not_configured";
+  const healthy = coreOk && redisOk;
+
   return NextResponse.json(
-    { database, redis, stripe, twilio: twilioStatus, vapi },
+    {
+      database,
+      redis,
+      stripe,
+      twilio: twilioStatus,
+      vapi,
+      resend,
+      openai,
+      production: isProduction,
+    },
     { status: healthy ? 200 : 503, headers: { "Cache-Control": "no-store" } },
   );
 }

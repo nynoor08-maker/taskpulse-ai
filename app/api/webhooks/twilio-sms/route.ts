@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import twilio from "twilio";
 import { createServiceClient } from "@/server";
 import { dispatchWebhookEvent } from "@/lib/events/webhook-dispatcher";
-import { captureException, enforceRateLimit } from "@/lib/security";
+import { captureException, enforceWebhookRateLimit } from "@/lib/security";
 
 type QuoteExtraction = {
   agreedPrice: number | null;
@@ -72,7 +72,7 @@ async function extractQuote(message: string): Promise<QuoteExtraction> {
 }
 
 export async function POST(request: Request) {
-  const rateLimitResponse = await enforceRateLimit(request);
+  const rateLimitResponse = await enforceWebhookRateLimit(request);
   if (rateLimitResponse) return rateLimitResponse;
 
   const authToken = process.env.TWILIO_AUTH_TOKEN;

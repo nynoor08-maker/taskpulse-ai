@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient, createServiceClient } from "@/server";
+import { asOne } from "@/lib/relations";
 import { ConversationCharts } from "./conversation-charts";
 
 export default async function AnalyticsPage({ params }: { params: Promise<{ orgSlug: string }> }) {
@@ -9,7 +10,7 @@ export default async function AnalyticsPage({ params }: { params: Promise<{ orgS
   if (!user) redirect("/");
   const { data: membership } = await userClient.from("organization_members").select("organizations!inner(id, slug)").eq("user_id", user.id).eq("organizations.slug", orgSlug).maybeSingle();
   if (!membership) notFound();
-  const organization = membership.organizations[0];
+  const organization = asOne(membership.organizations);
   if (!organization) notFound();
   const organizationId = organization.id;
   const supabase = await createServiceClient();
@@ -22,7 +23,7 @@ export default async function AnalyticsPage({ params }: { params: Promise<{ orgS
   const objections = new Map<string, number>();
   const performance = new Map((promptVariants ?? []).map((variant) => [variant.id, { name: variant.name, calls: 0, closed: 0, savings: 0 }]));
   for (const call of calls ?? []) {
-    const analytics = call.call_analytics?.[0];
+    const analytics = asOne(call.call_analytics);
     if (analytics) {
       sentimentCounts.set(analytics.vendor_sentiment, (sentimentCounts.get(analytics.vendor_sentiment) ?? 0) + 1);
       for (const point of analytics.negotiation_friction_points) objections.set(point, (objections.get(point) ?? 0) + 1);
@@ -31,7 +32,7 @@ export default async function AnalyticsPage({ params }: { params: Promise<{ orgS
       const item = performance.get(call.prompt_variant_id)!;
       item.calls++;
       if (analytics?.deal_closed) item.closed++;
-      const task = call.tasks[0];
+      const task = asOne(call.tasks);
       if (task?.max_budget != null && call.agreed_price != null) item.savings += Math.max(0, task.max_budget - call.agreed_price);
     }
   }

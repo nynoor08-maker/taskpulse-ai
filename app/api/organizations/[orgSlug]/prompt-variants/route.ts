@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/server";
+import { asOne } from "@/lib/relations";
 
 async function getOrganizationId(orgSlug: string) {
   const client = await createClient();
@@ -13,7 +14,7 @@ async function getOrganizationId(orgSlug: string) {
     .eq("organizations.slug", orgSlug)
     .maybeSingle();
   if (!data || !["owner", "admin"].includes(data.role)) return null;
-  return data.organizations[0]?.id ?? null;
+  return asOne(data.organizations)?.id ?? null;
 }
 
 export async function GET(_: Request, { params }: { params: Promise<{ orgSlug: string }> }) {

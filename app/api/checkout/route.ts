@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { createClient, createServiceClient } from "@/server";
+import { getAppUrl } from "@/lib/app-url";
 import { captureException, enforceRateLimit } from "@/lib/security";
 
 type CheckoutPayload = {
@@ -138,9 +139,12 @@ export async function POST(request: Request) {
           quantity: 1,
         },
       ],
-      metadata: { taskId: task.id },
-      success_url: `https://taskpulse-ai.vercel.app/dashboard?payment=success&taskId=${encodeURIComponent(task.id)}`,
-      cancel_url: "https://taskpulse-ai.vercel.app/dashboard?payment=cancelled",
+      metadata: {
+        taskId: task.id,
+        expectedAmountCents: String(Math.round(agreedPrice * 100)),
+      },
+      success_url: `${getAppUrl()}/dashboard?payment=success&taskId=${encodeURIComponent(task.id)}`,
+      cancel_url: `${getAppUrl()}/dashboard?payment=cancelled`,
     });
   } catch (error) {
     captureException(error, { route: "checkout", taskId: task.id });

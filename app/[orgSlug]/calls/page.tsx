@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient, createServiceClient } from "@/server";
+import { asOne } from "@/lib/relations";
 import { CallSupervisor } from "./call-supervisor";
 
 export default async function CallsPage({ params }: { params: Promise<{ orgSlug: string }> }) {
@@ -9,7 +10,7 @@ export default async function CallsPage({ params }: { params: Promise<{ orgSlug:
   if (!user) redirect("/");
   const { data: membership } = await client.from("organization_members").select("role, organizations!inner(id, slug)").eq("user_id", user.id).eq("organizations.slug", orgSlug).maybeSingle();
   if (!membership || !["owner", "admin"].includes(membership.role)) notFound();
-  const organization = membership.organizations[0];
+  const organization = asOne(membership.organizations);
   if (!organization) notFound();
   const organizationId = organization.id;
   const supabase = await createServiceClient();
@@ -17,6 +18,6 @@ export default async function CallsPage({ params }: { params: Promise<{ orgSlug:
   if (error) throw new Error(`Unable to load active calls: ${error.message}`);
   return <CallSupervisor initialCalls={(calls ?? []).map((call) => ({
     ...call,
-    tasks: call.tasks[0] ?? null,
+    tasks: asOne(call.tasks),
   }))} orgSlug={orgSlug} />;
 }

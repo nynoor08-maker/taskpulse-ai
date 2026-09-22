@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { createVendorSquad } from "@/lib/vapi/agents";
 import { createClient, createServiceClient } from "@/server";
+import { placeVendorSquadCall } from "@/lib/vapi/dispatch";
+import { checkDailyDispatchLimit } from "@/lib/dispatch-limit";
 import { captureException, enforceRateLimit } from "@/lib/security";
 
 type DispatchPayload = {
@@ -8,11 +9,6 @@ type DispatchPayload = {
   phoneNumber: string;
   description: string;
   maxBudget: number | null;
-};
-
-type VapiCallResponse = {
-  id?: string;
-  monitor?: { controlUrl?: string; listenUrl?: string };
 };
 
 function isDispatchPayload(value: unknown): value is DispatchPayload {
@@ -41,7 +37,6 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    captureException(new Error("Unable to reach Vapi."), { route: "dispatch-squad" });
     return NextResponse.json(
       { success: false, error: "Request body must be valid JSON." },
       { status: 400 },
@@ -119,113 +114,64 @@ export async function POST(request: Request) {
     );
   }
 
-  const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data: recentTasks, error: recentTasksError } = await supabase
-    .from("tasks")
-    .select("id")
-    .eq("user_id", user.id)
-    .gte("created_at", windowStart);
-  if (recentTasksError) {
+  const dispatchLimit = await checkDailyDispatchLimit(supabase, user.id);
+  if (!dispatchLimit.ok) {
     return NextResponse.json(
-      { success: false, error: `Unable to check dispatch limit: ${recentTasksError.message}` },
-      { status: 500 },
-    );
-  }
-
-  const taskIds = (recentTasks ?? []).map((recentTask) => recentTask.id);
-  if (taskIds.length > 0) {
-    const { count, error: rateLimitError } = await supabase
-      .from("call_logs")
-      .select("id", { count: "exact", head: true })
-      .in("task_id", taskIds);
-    if (rateLimitError) {
-      return NextResponse.json(
-        { success: false, error: `Unable to check dispatch limit: ${rateLimitError.message}` },
-        { status: 500 },
-      );
-    }
-    if ((count ?? 0) >= 5) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Daily dispatch limit reached. You can dispatch up to 5 calls every 24 hours.",
-        },
-        { status: 429, headers: { "Retry-After": "86400" } },
-      );
-    }
-  }
-
-  const apiKey = process.env.VAPI_API_KEY;
-  const assistantPhoneNumberId = process.env.VAPI_PHONE_NUMBER_ID;
-  if (!apiKey || !assistantPhoneNumberId) {
-    return NextResponse.json(
-      { success: false, error: "Vapi configuration is incomplete." },
-      { status: 500 },
-    );
-  }
-
-  let vapiResponse: Response;
-  try {
-    vapiResponse = await fetch("https://api.vapi.ai/call", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
+      { success: false, error: dispatchLimit.error },
+      {
+        status: dispatchLimit.status,
+        headers: dispatchLimit.status === 429 ? { "Retry-After": "86400" } : undefined,
       },
-      body: JSON.stringify({
-        squad: createVendorSquad({
-          taskDescription: body.description,
-          maxBudget: body.maxBudget,
-          vendorPhone: body.phoneNumber,
-        }),
-        phoneNumberId: assistantPhoneNumberId,
-        customer: { number: body.phoneNumber },
-      }),
+    );
+  }
+
+  let call;
+  try {
+    call = await placeVendorSquadCall({
+      description: body.description,
+      maxBudget: body.maxBudget,
+      vendorPhone: body.phoneNumber,
     });
-  } catch {
+  } catch (error) {
+    captureException(error, { route: "dispatch-squad", taskId: body.taskId });
     return NextResponse.json(
-      { success: false, error: "Unable to reach Vapi." },
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to place squad call.",
+      },
       { status: 502 },
     );
   }
 
-  if (!vapiResponse.ok) {
-    return NextResponse.json(
-      { success: false, error: `Vapi rejected the call: ${await vapiResponse.text()}` },
-      { status: 502 },
-    );
-  }
-
-  const vapiCall = (await vapiResponse.json()) as VapiCallResponse;
-  if (!vapiCall.id) {
-    return NextResponse.json(
-      { success: false, error: "Vapi returned no call ID." },
-      { status: 502 },
-    );
-  }
-
-  const { data: callLog, error: logError } = await supabase.from("call_logs").insert({
-    organization_id: task.organization_id,
-    task_id: task.id,
-    vapi_call_id: vapiCall.id,
-    vendor_phone: body.phoneNumber,
-    status: "in_progress",
-  }).select("id").single();
+  const { data: callLog, error: logError } = await supabase
+    .from("call_logs")
+    .insert({
+      organization_id: task.organization_id,
+      task_id: task.id,
+      vapi_call_id: call.id,
+      vendor_phone: body.phoneNumber,
+      status: "in_progress",
+    })
+    .select("id")
+    .single();
   if (logError) {
     return NextResponse.json(
       { success: false, error: `Unable to save call log: ${logError.message}` },
       { status: 500 },
     );
   }
-  if (vapiCall.monitor?.controlUrl) {
+  if (call.monitor?.controlUrl) {
     const { error: monitorError } = await supabase.from("call_monitor_credentials").insert({
       call_log_id: callLog.id,
-      vapi_control_url: vapiCall.monitor.controlUrl,
-      vapi_listen_url: vapiCall.monitor.listenUrl ?? null,
+      vapi_control_url: call.monitor.controlUrl,
+      vapi_listen_url: call.monitor.listenUrl ?? null,
     });
     if (monitorError) {
-      captureException(monitorError, { route: "dispatch-squad", callId: vapiCall.id, operation: "save-monitor-credentials" });
+      captureException(monitorError, {
+        route: "dispatch-squad",
+        callId: call.id,
+        operation: "save-monitor-credentials",
+      });
     }
   }
 
@@ -240,5 +186,5 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({ success: true, callId: vapiCall.id });
+  return NextResponse.json({ success: true, callId: call.id });
 }

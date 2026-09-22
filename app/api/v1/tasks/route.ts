@@ -1,7 +1,9 @@
-import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
-import { captureException, enforceRateLimit } from "@/lib/security";
 import { createServiceClient } from "@/server";
+import { captureException, enforceRateLimit } from "@/lib/security";
+import { placeVendorSquadCall } from "@/lib/vapi/dispatch";
+import { checkDailyDispatchLimit } from "@/lib/dispatch-limit";
+import { createHash } from "node:crypto";
 
 type TaskPayload = {
   vendorPhone: string;
@@ -96,53 +98,29 @@ export async function POST(request: Request) {
         target_vendor_phone: payload.vendorPhone,
         max_budget: payload.maxBudget,
         callback_url: payload.callbackUrl,
+        source: "api",
       })
       .select("id, status")
       .single();
     if (taskError) throw new Error(`Unable to create task: ${taskError.message}`);
 
-    const { data: telephony, error: telephonyError } = await supabase.rpc(
-      "get_organization_telephony",
-      { p_organization_id: apiKey.organization_id },
-    );
-    const tenantTelephony = telephony?.[0];
-    const assistantId = process.env.VAPI_ASSISTANT_ID;
-    const assistantVersion = process.env.VAPI_ASSISTANT_VERSION;
-    if (
-      telephonyError ||
-      !tenantTelephony?.vapi_api_key ||
-      !tenantTelephony.vapi_phone_number_id ||
-      !assistantId ||
-      !assistantVersion
-    ) {
-      throw new Error("Organization telephony configuration is incomplete.");
+    const dispatchLimit = await checkDailyDispatchLimit(supabase, apiKey.created_by_user_id);
+    if (!dispatchLimit.ok) {
+      return NextResponse.json(
+        { error: dispatchLimit.error, taskId: task.id },
+        {
+          status: dispatchLimit.status,
+          headers:
+            dispatchLimit.status === 429 ? { "Retry-After": "86400" } : undefined,
+        },
+      );
     }
 
-    const vapiResponse = await fetch("https://api.vapi.ai/call/phone", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${tenantTelephony.vapi_api_key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        assistantId,
-        assistantVersion,
-        phoneNumberId: tenantTelephony.vapi_phone_number_id,
-        customer: { number: payload.vendorPhone },
-        assistantOverrides: {
-          variableValues: {
-            taskDescription: payload.description,
-            maxBudget: payload.maxBudget?.toString() ?? "",
-            vendorPhone: payload.vendorPhone,
-          },
-        },
-      }),
+    const call = await placeVendorSquadCall({
+      description: payload.description,
+      maxBudget: payload.maxBudget,
+      vendorPhone: payload.vendorPhone,
     });
-    if (!vapiResponse.ok) {
-      throw new Error(`Vapi rejected the call: ${await vapiResponse.text()}`);
-    }
-    const call = (await vapiResponse.json()) as { id?: string };
-    if (!call.id) throw new Error("Vapi returned no call ID.");
 
     const { error: callLogError } = await supabase.from("call_logs").insert({
       organization_id: apiKey.organization_id,
@@ -152,6 +130,21 @@ export async function POST(request: Request) {
       status: "in_progress",
     });
     if (callLogError) throw new Error(`Unable to create call log: ${callLogError.message}`);
+
+    if (call.monitor?.controlUrl) {
+      const { data: callLog } = await supabase
+        .from("call_logs")
+        .select("id")
+        .eq("vapi_call_id", call.id)
+        .maybeSingle();
+      if (callLog) {
+        await supabase.from("call_monitor_credentials").insert({
+          call_log_id: callLog.id,
+          vapi_control_url: call.monitor.controlUrl,
+          vapi_listen_url: call.monitor.listenUrl ?? null,
+        });
+      }
+    }
 
     const { data: dispatchedTask, error: dispatchError } = await supabase
       .from("tasks")
@@ -165,12 +158,16 @@ export async function POST(request: Request) {
       {
         taskId: task.id,
         status: dispatchedTask.status,
+        callId: call.id,
         statusUrl: `${new URL(request.url).origin}/api/v1/tasks/${task.id}`,
       },
       { status: 201 },
     );
   } catch (error) {
     captureException(error, { route: "v1-tasks" });
-    return NextResponse.json({ error: "Unable to dispatch task." }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to dispatch task." },
+      { status: 500 },
+    );
   }
 }

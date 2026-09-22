@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { AdminMonitor } from "./admin-monitor";
 import { requireAdmin } from "@/lib/admin";
+import { asOne } from "@/lib/relations";
 
 export const dynamic = "force-dynamic";
 
@@ -74,18 +75,21 @@ export default async function AdminPage() {
     completedCalls.length === 0
       ? 0
       : completedCalls.reduce((total, call) => {
-          const task = Array.isArray(call.tasks) ? call.tasks[0] : call.tasks;
+          const task = asOne(call.tasks);
           return total + (numericValue(task?.max_budget) - numericValue(call.agreed_price));
         }, 0) / completedCalls.length;
 
   const platformVolume = (paidTasksResult.data ?? []).reduce((total, task) => {
-    const callLogs = Array.isArray(task.call_logs) ? task.call_logs : [];
+    const callLogs = Array.isArray(task.call_logs) ? task.call_logs : task.call_logs ? [task.call_logs] : [];
     return total + Math.max(...callLogs.map((call) => numericValue(call.agreed_price)), 0);
   }, 0);
 
   return (
     <AdminMonitor
-      initialCalls={activeCallsResult.data ?? []}
+      initialCalls={(activeCallsResult.data ?? []).map((call) => ({
+        ...call,
+        tasks: asOne(call.tasks) ? [asOne(call.tasks)!] : [],
+      }))}
       dispatchPaused={settingsResult.data.dispatch_paused}
       metrics={{
         totalTasks: tasksResult.count ?? 0,

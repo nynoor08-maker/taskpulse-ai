@@ -84,7 +84,7 @@ async function main() {
   if (shouldDispatch) {
     dispatchResults = await Promise.allSettled(Array.from({ length: dispatches }, () =>
       measure(async () => {
-        const response = await fetch(`${baseUrl}/api/dispatch-call`, {
+        const response = await fetch(`${baseUrl}/api/dispatch-squad`, {
           method: "POST",
           headers: { Authorization: authorization!, "Content-Type": "application/json" },
           body: dispatchPayload,
