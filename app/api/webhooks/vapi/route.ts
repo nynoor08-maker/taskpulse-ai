@@ -8,7 +8,7 @@ import { analyzeCallLog } from "@/lib/conversation-analytics";
 import { captureException, enforceWebhookRateLimit } from "@/lib/security";
 import { sendTaskSMS } from "@/lib/twilio";
 import { findNextVendor } from "@/lib/vendor-pool";
-import { placeVendorSquadCall } from "@/lib/vapi/dispatch";
+import { dispatchAndRecordVendorCall } from "@/lib/vapi/dispatch";
 
 /** Hard cap on automatic re-dials to the next vendor in the pool, to bound cost and prevent runaway auto-dial loops. */
 const MAX_VENDOR_ATTEMPTS = 3;
@@ -137,20 +137,13 @@ async function tryDispatchNextVendor(
   });
   if (!nextVendor) return false;
 
-  const vapiCall = await placeVendorSquadCall({
+  await dispatchAndRecordVendorCall(supabase, {
     description: task.description ?? task.title,
     maxBudget: task.max_budget,
     vendorPhone: nextVendor.phone_number,
+    taskId,
+    organizationId: nextVendor.organization_id ?? task.organization_id,
   });
-
-  const { error: callLogError } = await supabase.from("call_logs").insert({
-    organization_id: nextVendor.organization_id ?? task.organization_id,
-    task_id: taskId,
-    vapi_call_id: vapiCall.id,
-    vendor_phone: nextVendor.phone_number,
-    status: "in_progress",
-  });
-  if (callLogError) throw new Error(`Unable to save call log: ${callLogError.message}`);
 
   const { error: taskUpdateError } = await supabase
     .from("tasks")

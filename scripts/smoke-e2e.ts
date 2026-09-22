@@ -36,13 +36,13 @@ async function assertCodeMarkers() {
   if (!dispatchCall.includes("isSingleAssistantDispatchAllowed")) {
     throw new Error("dispatch-call is not gated.");
   }
-  if (!dispatchSquad.includes("placeVendorSquadCall")) {
-    throw new Error("dispatch-squad is not using placeVendorSquadCall.");
+  if (!dispatchSquad.includes("dispatchAndRecordVendorCall")) {
+    throw new Error("dispatch-squad is not using transactional squad dispatch.");
   }
-  if (!v1Tasks.includes("placeVendorSquadCall")) {
+  if (!v1Tasks.includes("dispatchAndRecordVendorCall")) {
     throw new Error("v1/tasks is not using squad dispatch.");
   }
-  if (!tasksRoute.includes("placeVendorSquadCall")) {
+  if (!tasksRoute.includes("dispatchAndRecordVendorCall")) {
     throw new Error("dashboard /api/tasks is not using squad dispatch.");
   }
   log("CODE", "Squad-canonical markers OK");
